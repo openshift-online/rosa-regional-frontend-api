@@ -5,16 +5,19 @@ Stateless gateway API for ROSA HCP regional cluster management.
 ## Architecture
 
 ```mermaid
-flowchart TB
-    CLI["AWS CLI / SDK"] --> APIGW["API Gateway"]
-    APIGW -->|SigV4 headers| AuthMW["Auth Middleware"]
-    AuthMW -->|lookup| DDB[("DynamoDB")]
-    AuthMW -->|privileged?| PrivCheck{"privileged"}
+flowchart LR
+    CLI["AWS CLI"] --> APIGW["API Gateway"]
+    APIGW --> ALB["Internal ALB"]
+    ALB --> FrontendAPI
 
-    PrivCheck -->|yes| MgmtHandler["management_clusters"]
-    PrivCheck -->|no| Forbidden["403 Forbidden"]
+    subgraph FrontendAPI["Frontend API"]
+        AuthMW["Auth Middleware"] --> Handler["Handlers"]
+        Handler -->|privileged only| MgmtCluster["management_cluster"]
+        Handler --> HCP["HCP Managament (TBD)"]
+    end
 
-    MgmtHandler -->|REST| Maestro["Maestro API"]
+    AuthMW -->|lookup if privileged| DDB[("DynamoDB")]
+    MgmtCluster -->|gRPC| Maestro["Maestro"]
 ```
 
 ## Endpoints
