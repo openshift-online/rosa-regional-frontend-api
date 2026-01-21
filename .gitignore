@@ -1,0 +1,22 @@
+# Binary
+rosa-regional-frontend-api
+
+# Test coverage
+coverage.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+
+# Vendor (if used)
+vendor/
+
+# Local development
+.env
+*.local
