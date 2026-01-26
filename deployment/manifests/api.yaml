@@ -276,5 +276,5 @@ spec:
   serviceRef:
     name: rosa-regional-frontend
     port: 8080
-  targetGroupARN: TARGET_GROUP_ARN  # Replace with: terraform output -raw api_target_group_arn
+  targetGroupARN: TARGET_GROUP_ARN  # Replace with actual ARN or use Helm chart with ConfigMap lookup
   targetType: ip

@@ -66,7 +66,7 @@ targetGroup:
     enabled: true
     namespace: kube-system
     configMapName: bootstrap-output
-    key: TARGET_GROUP_ARN
+    key: api_target_group_arn
   # If lookup is disabled, you can manually set the ARN here
   arn: ""
   targetType: ip

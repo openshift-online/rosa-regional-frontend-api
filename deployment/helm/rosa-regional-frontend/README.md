@@ -7,7 +7,7 @@ This Helm chart deploys the rosa-regional-frontend API with an Envoy sidecar pro
 - Amazon EKS cluster with Auto Mode enabled
 - Kubernetes 1.19+
 - Helm 3.2.0+
-- A ConfigMap named `bootstrap-output` in the `kube-system` namespace containing the `TARGET_GROUP_ARN` key
+- A ConfigMap named `bootstrap-output` in the `kube-system` namespace containing the `api_target_group_arn` key
 
 **Note:** This chart uses the `eks.amazonaws.com/v1` TargetGroupBinding API, which is natively supported in EKS Auto Mode. No additional AWS Load Balancer Controller installation is required.
 
@@ -62,7 +62,7 @@ The following table lists the configurable parameters of the chart and their def
 | `targetGroup.lookup.enabled` | Enable ConfigMap lookup for Target Group ARN | `true` |
 | `targetGroup.lookup.namespace` | Namespace containing the ConfigMap | `kube-system` |
 | `targetGroup.lookup.configMapName` | ConfigMap name | `bootstrap-output` |
-| `targetGroup.lookup.key` | Key in ConfigMap containing ARN | `TARGET_GROUP_ARN` |
+| `targetGroup.lookup.key` | Key in ConfigMap containing ARN | `api_target_group_arn` |
 | `targetGroup.arn` | Manual Target Group ARN (if lookup disabled) | `""` |
 
 ## Target Group ARN Configuration
@@ -79,7 +79,7 @@ targetGroup:
     enabled: true
     namespace: kube-system
     configMapName: bootstrap-output
-    key: TARGET_GROUP_ARN
+    key: api_target_group_arn
 ```
 
 **Note:** The ConfigMap must exist before installing the chart, or the TargetGroupBinding will have an empty ARN.
