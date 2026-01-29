@@ -47,3 +47,16 @@ Selector labels
 app.kubernetes.io/name: {{ include "rosa-regional-frontend.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
+
+{{/*
+lookupConfigMapValue retrieves a specific key's value from an existing ConfigMap.
+Usage: include "lookupConfigMapValue" (dict "Namespace" "default" "Name" "bootstrap-output" "Key" "api_target_group_arn" "Scope" .)
+*/}}
+{{- define "lookupConfigMapValue" -}}
+{{- $key := .Key -}}
+{{- with (lookup "v1" "ConfigMap" .Namespace .Name) -}}
+  {{- index .data $key | default "" -}}
+{{- else -}}
+  {{- fail (printf "ConfigMap %s/%s not found" .Namespace .Name) -}}
+{{- end -}}
+{{- end -}}

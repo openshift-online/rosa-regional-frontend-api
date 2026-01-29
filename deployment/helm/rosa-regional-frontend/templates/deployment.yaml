@@ -15,7 +15,6 @@
 #
 # Note: Envoy listens on 8080, app health server uses 8081
 # =============================================================================
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:

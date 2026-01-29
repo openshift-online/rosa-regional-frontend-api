@@ -1,0 +1,58 @@
+# RBAC for PostSync hook that creates TargetGroupBinding from bootstrap-output ConfigMap.
+# ServiceAccount + Role/RoleBinding in rosa-regional-frontend (create/update TGB).
+# Role/RoleBinding in default (get configmap bootstrap-output).
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: post-sync-patch-tgb
+  namespace: rosa-regional-frontend
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: post-sync-patch-tgb
+  namespace: rosa-regional-frontend
+rules:
+  - apiGroups: ["eks.amazonaws.com"]
+    resources: ["targetgroupbindings"]
+    verbs: ["get", "create", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: post-sync-patch-tgb
+  namespace: rosa-regional-frontend
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: post-sync-patch-tgb
+subjects:
+  - kind: ServiceAccount
+    name: post-sync-patch-tgb
+    namespace: rosa-regional-frontend
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: post-sync-patch-tgb-read-config
+  namespace: default
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["bootstrap-output"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: post-sync-patch-tgb-read-config
+  namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: post-sync-patch-tgb-read-config
+subjects:
+  - kind: ServiceAccount
+    name: post-sync-patch-tgb
+    namespace: rosa-regional-frontend

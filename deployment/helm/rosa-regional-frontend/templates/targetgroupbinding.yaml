@@ -9,12 +9,7 @@ spec:
     name: {{ .Values.app.name }}
     port: {{ .Values.service.ports.http }}
   {{- if .Values.targetGroup.lookup.enabled }}
-  {{- $bootstrapConfig := lookup "v1" "ConfigMap" .Values.targetGroup.lookup.namespace .Values.targetGroup.lookup.configMapName }}
-  {{- if $bootstrapConfig }}
-  targetGroupARN: {{ index $bootstrapConfig.data .Values.targetGroup.lookup.key }}
-  {{- else }}
-  targetGroupARN: ""  # ConfigMap {{ .Values.targetGroup.lookup.configMapName }} not found in {{ .Values.targetGroup.lookup.namespace }} namespace
-  {{- end }}
+  targetGroupARN: {{ include "lookupConfigMapValue" (dict "Namespace" .Values.targetGroup.lookup.namespace "Name" .Values.targetGroup.lookup.configMapName "Key" .Values.targetGroup.lookup.key "Scope" .) }}
   {{- else }}
   targetGroupARN: {{ .Values.targetGroup.arn }}
   {{- end }}
