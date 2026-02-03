@@ -12,12 +12,12 @@ import (
 
 // ResourceBundleHandler handles resource bundle endpoints
 type ResourceBundleHandler struct {
-	maestroClient *maestro.Client
+	maestroClient maestro.ClientInterface
 	logger        *slog.Logger
 }
 
 // NewResourceBundleHandler creates a new ResourceBundleHandler
-func NewResourceBundleHandler(maestroClient *maestro.Client, logger *slog.Logger) *ResourceBundleHandler {
+func NewResourceBundleHandler(maestroClient maestro.ClientInterface, logger *slog.Logger) *ResourceBundleHandler {
 	return &ResourceBundleHandler{
 		maestroClient: maestroClient,
 		logger:        logger,

@@ -27,399 +27,648 @@
     window.onload = function() {
       const ui = SwaggerUIBundle({
         url: window.location.origin + '/openapi.yaml',
-        spec: {
-  "openapi": "3.0.3",
-  "info": {
-    "title": "ROSA Regional Frontend API",
-    "description": "Frontend API for ROSA HCP regional cluster management",
-    "version": "0.0.1",
-    "license": {
-      "name": "Apache 2.0",
-      "url": "https://www.apache.org/licenses/LICENSE-2.0"
-    }
-  },
-  "servers": [
-    {
-      "url": "http://localhost:8000/api/v0",
-      "description": "Local Development"
+        spec: 
+  {
+    "openapi": "3.0.3",
+    "info": {
+      "title": "ROSA Regional Frontend API",
+      "description": "Frontend API for ROSA HCP regional cluster management",
+      "version": "0.0.1",
+      "license": {
+        "name": "Apache 2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0"
+      }
     },
-    {
-      "url": "/api/v0",
-      "description": "API v0"
-    }
-  ],
-  "paths": {
-    "/management_clusters": {
-      "post": {
-        "summary": "Create a new management cluster",
-        "description": "Creates a new management cluster by registering a consumer in Maestro.\nRequires privileged access (admin AWS account).\n",
-        "operationId": "createManagementCluster",
-        "tags": ["ManagementClusters"],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ManagementClusterRequest"
+    "servers": [
+      {
+        "url": "/api/v0",
+        "description": "API v0"
+      }
+    ],
+    "paths": {
+      "/management_clusters": {
+        "post": {
+          "summary": "Create a new management cluster",
+          "description": "Creates a new management cluster by registering a consumer in Maestro.\nRequires privileged access (admin AWS account).\n",
+          "operationId": "createManagementCluster",
+          "tags": [
+            "ManagementClusters"
+          ],
+          "requestBody": {
+            "required": false,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementClusterRequest"
+                }
+              }
+            }
+          },
+          "responses": {
+            "201": {
+              "description": "Management cluster created successfully",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/ManagementCluster"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Bad request",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            },
+            "403": {
+              "description": "Forbidden - account not privileged",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            },
+            "500": {
+              "description": "Internal server error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
               }
             }
           }
         },
-        "responses": {
-          "201": {
-            "description": "Management cluster created successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ManagementCluster"
-                }
+        "get": {
+          "summary": "List all management clusters",
+          "description": "Returns a list of all management clusters (consumers in Maestro).\nRequires privileged access (admin AWS account).\n",
+          "operationId": "listManagementClusters",
+          "tags": [
+            "ManagementClusters"
+          ],
+          "parameters": [
+            {
+              "name": "page",
+              "in": "query",
+              "description": "Page number (1-indexed)",
+              "schema": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 1
+              }
+            },
+            {
+              "name": "size",
+              "in": "query",
+              "description": "Number of items per page",
+              "schema": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 100
               }
             }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
+          ],
+          "responses": {
+            "200": {
+              "description": "List of management clusters",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/ManagementClusterList"
+                  }
                 }
               }
-            }
-          },
-          "403": {
-            "description": "Forbidden - account not privileged",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
+            },
+            "403": {
+              "description": "Forbidden - account not privileged",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
                 }
               }
-            }
-          },
-          "500": {
-            "description": "Internal server error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
+            },
+            "500": {
+              "description": "Internal server error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
                 }
               }
             }
           }
         }
       },
-      "get": {
-        "summary": "List all management clusters",
-        "description": "Returns a list of all management clusters (consumers in Maestro).\nRequires privileged access (admin AWS account).\n",
-        "operationId": "listManagementClusters",
-        "tags": ["ManagementClusters"],
-        "parameters": [
-          {
-            "name": "page",
-            "in": "query",
-            "description": "Page number (1-indexed)",
-            "schema": {
+      "/management_clusters/{id}": {
+        "get": {
+          "summary": "Get a management cluster by ID",
+          "description": "Returns a specific management cluster by its ID.\nRequires privileged access (admin AWS account).\n",
+          "operationId": "getManagementCluster",
+          "tags": [
+            "ManagementClusters"
+          ],
+          "parameters": [
+            {
+              "name": "id",
+              "in": "path",
+              "required": true,
+              "description": "Management cluster ID",
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Management cluster details",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/ManagementCluster"
+                  }
+                }
+              }
+            },
+            "403": {
+              "description": "Forbidden - account not privileged",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            },
+            "404": {
+              "description": "Management cluster not found",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            },
+            "500": {
+              "description": "Internal server error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/resource_bundles": {
+        "get": {
+          "summary": "List all resource bundles",
+          "description": "Returns a paginated list of resource bundles.\nSupports filtering via search query and custom field selection.\n",
+          "operationId": "listResourceBundles",
+          "tags": [
+            "ResourceBundles"
+          ],
+          "parameters": [
+            {
+              "name": "page",
+              "in": "query",
+              "description": "Page number (1-indexed)",
+              "schema": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 1
+              }
+            },
+            {
+              "name": "size",
+              "in": "query",
+              "description": "Number of items per page",
+              "schema": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 100
+              }
+            },
+            {
+              "name": "search",
+              "in": "query",
+              "description": "SQL-like filter criteria on resource attributes",
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "orderBy",
+              "in": "query",
+              "description": "SQL-like ordering (e.g., \"name asc\")",
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "fields",
+              "in": "query",
+              "description": "Comma-separated list of fields to return",
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "X-Operation-ID",
+              "in": "header",
+              "description": "Optional operation ID for tracking",
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "List of resource bundles",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/ResourceBundleList"
+                  }
+                }
+              }
+            },
+            "401": {
+              "description": "Invalid authentication token",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            },
+            "403": {
+              "description": "Forbidden - user lacks required permissions",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            },
+            "500": {
+              "description": "Internal server error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/live": {
+        "get": {
+          "summary": "Liveness probe",
+          "description": "Returns 200 if the service is alive",
+          "operationId": "liveness",
+          "tags": [
+            "Health"
+          ],
+          "responses": {
+            "200": {
+              "description": "Service is alive",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HealthStatus"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/ready": {
+        "get": {
+          "summary": "Readiness probe",
+          "description": "Returns 200 if the service is ready to accept traffic",
+          "operationId": "readiness",
+          "tags": [
+            "Health"
+          ],
+          "responses": {
+            "200": {
+              "description": "Service is ready",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HealthStatus"
+                  }
+                }
+              }
+            },
+            "503": {
+              "description": "Service is not ready",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HealthStatus"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "components": {
+      "schemas": {
+        "ManagementClusterRequest": {
+          "type": "object",
+          "description": "Request body for creating a management cluster",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Optional name for the management cluster.\nMust follow RFC 1123 format (like Kubernetes namespace).\nIf not provided, defaults to the generated ID.\n",
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "maxLength": 63
+            },
+            "labels": {
+              "type": "object",
+              "description": "Key-value labels for the management cluster",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "ManagementCluster": {
+          "type": "object",
+          "description": "A management cluster (passthrough from Maestro consumer)",
+          "required": [
+            "id",
+            "kind",
+            "href",
+            "name"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Unique identifier for the management cluster"
+            },
+            "kind": {
+              "type": "string",
+              "description": "Resource kind",
+              "example": "Consumer"
+            },
+            "href": {
+              "type": "string",
+              "description": "API href reference"
+            },
+            "name": {
+              "type": "string",
+              "description": "Unique name of the management cluster"
+            },
+            "labels": {
+              "type": "object",
+              "description": "Key-value labels",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "created_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Creation timestamp"
+            },
+            "updated_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Last update timestamp"
+            }
+          }
+        },
+        "ManagementClusterList": {
+          "type": "object",
+          "description": "Paginated list of management clusters",
+          "required": [
+            "kind",
+            "page",
+            "size",
+            "total",
+            "items"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "description": "Resource kind",
+              "example": "ConsumerList"
+            },
+            "page": {
               "type": "integer",
-              "minimum": 1,
-              "default": 1
-            }
-          },
-          {
-            "name": "size",
-            "in": "query",
-            "description": "Number of items per page",
-            "schema": {
+              "description": "Current page number"
+            },
+            "size": {
               "type": "integer",
-              "minimum": 1,
-              "maximum": 100,
-              "default": 100
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "List of management clusters",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ManagementClusterList"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden - account not privileged",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal server error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/management_clusters/{id}": {
-      "get": {
-        "summary": "Get a management cluster by ID",
-        "description": "Returns a specific management cluster by its ID.\nRequires privileged access (admin AWS account).\n",
-        "operationId": "getManagementCluster",
-        "tags": ["ManagementClusters"],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "description": "Management cluster ID",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Management cluster details",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ManagementCluster"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden - account not privileged",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Management cluster not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal server error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/live": {
-      "get": {
-        "summary": "Liveness probe",
-        "description": "Returns 200 if the service is alive",
-        "operationId": "liveness",
-        "tags": ["Health"],
-        "responses": {
-          "200": {
-            "description": "Service is alive",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthStatus"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/ready": {
-      "get": {
-        "summary": "Readiness probe",
-        "description": "Returns 200 if the service is ready to accept traffic",
-        "operationId": "readiness",
-        "tags": ["Health"],
-        "responses": {
-          "200": {
-            "description": "Service is ready",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthStatus"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Service is not ready",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthStatus"
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  },
-  "components": {
-    "schemas": {
-      "ManagementClusterRequest": {
-        "type": "object",
-        "description": "Request body for creating a management cluster",
-        "properties": {
-          "name": {
-            "type": "string",
-            "description": "Optional name for the management cluster.\nMust follow RFC 1123 format (like Kubernetes namespace).\nIf not provided, defaults to the generated ID.\n",
-            "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
-            "maxLength": 63
-          },
-          "labels": {
-            "type": "object",
-            "description": "Key-value labels for the management cluster",
-            "additionalProperties": {
-              "type": "string"
-            }
-          }
-        }
-      },
-      "ManagementCluster": {
-        "type": "object",
-        "description": "A management cluster (passthrough from Maestro consumer)",
-        "required": ["id", "kind", "href", "name"],
-        "properties": {
-          "id": {
-            "type": "string",
-            "description": "Unique identifier for the management cluster"
-          },
-          "kind": {
-            "type": "string",
-            "description": "Resource kind",
-            "example": "Consumer"
-          },
-          "href": {
-            "type": "string",
-            "description": "API href reference"
-          },
-          "name": {
-            "type": "string",
-            "description": "Unique name of the management cluster"
-          },
-          "labels": {
-            "type": "object",
-            "description": "Key-value labels",
-            "additionalProperties": {
-              "type": "string"
-            }
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Creation timestamp"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Last update timestamp"
-          }
-        }
-      },
-      "ManagementClusterList": {
-        "type": "object",
-        "description": "Paginated list of management clusters",
-        "required": ["kind", "page", "size", "total", "items"],
-        "properties": {
-          "kind": {
-            "type": "string",
-            "description": "Resource kind",
-            "example": "ConsumerList"
-          },
-          "page": {
-            "type": "integer",
-            "description": "Current page number"
-          },
-          "size": {
-            "type": "integer",
-            "description": "Number of items per page"
-          },
-          "total": {
-            "type": "integer",
-            "description": "Total number of items"
-          },
-          "items": {
-            "type": "array",
+              "description": "Number of items per page"
+            },
+            "total": {
+              "type": "integer",
+              "description": "Total number of items"
+            },
             "items": {
-              "$ref": "#/components/schemas/ManagementCluster"
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/ManagementCluster"
+              }
             }
           }
-        }
-      },
-      "Error": {
-        "type": "object",
-        "description": "Error response",
-        "required": ["code", "reason"],
-        "properties": {
-          "id": {
-            "type": "string",
-            "description": "Error ID"
-          },
-          "kind": {
-            "type": "string",
-            "description": "Resource kind",
-            "example": "Error"
-          },
-          "href": {
-            "type": "string",
-            "description": "API href reference"
-          },
-          "code": {
-            "type": "string",
-            "description": "Error code"
-          },
-          "reason": {
-            "type": "string",
-            "description": "Human-readable error message"
-          },
-          "operation_id": {
-            "type": "string",
-            "description": "Request operation ID for tracing"
+        },
+        "ResourceBundle": {
+          "type": "object",
+          "description": "A resource bundle containing manifests for deployment",
+          "required": [
+            "id",
+            "kind",
+            "href",
+            "name"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Unique identifier for the resource bundle"
+            },
+            "kind": {
+              "type": "string",
+              "description": "Resource kind",
+              "example": "ResourceBundle"
+            },
+            "href": {
+              "type": "string",
+              "description": "API href reference"
+            },
+            "name": {
+              "type": "string",
+              "description": "Name of the resource bundle"
+            },
+            "consumer_name": {
+              "type": "string",
+              "description": "Name of the consumer this bundle is associated with"
+            },
+            "version": {
+              "type": "integer",
+              "description": "Version number of the resource bundle"
+            },
+            "created_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Creation timestamp"
+            },
+            "updated_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Last update timestamp"
+            },
+            "deleted_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Deletion timestamp (if soft-deleted)"
+            },
+            "metadata": {
+              "type": "object",
+              "description": "Additional metadata",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "manifests": {
+              "type": "array",
+              "description": "Array of Kubernetes manifests",
+              "items": {
+                "type": "object"
+              }
+            },
+            "delete_option": {
+              "type": "object",
+              "description": "Deletion strategy for the resource bundle"
+            },
+            "manifest_configs": {
+              "type": "array",
+              "description": "Configuration for manifests",
+              "items": {
+                "type": "object"
+              }
+            },
+            "status": {
+              "type": "object",
+              "description": "Status of the resource bundle"
+            }
           }
-        }
-      },
-      "HealthStatus": {
-        "type": "object",
-        "description": "Health check response",
-        "properties": {
-          "status": {
-            "type": "string",
-            "enum": ["ok", "degraded", "unavailable"],
-            "description": "Health status"
+        },
+        "ResourceBundleList": {
+          "type": "object",
+          "description": "Paginated list of resource bundles",
+          "required": [
+            "kind",
+            "page",
+            "size",
+            "total",
+            "items"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "description": "Resource kind",
+              "example": "ResourceBundleList"
+            },
+            "page": {
+              "type": "integer",
+              "description": "Current page number"
+            },
+            "size": {
+              "type": "integer",
+              "description": "Number of items per page"
+            },
+            "total": {
+              "type": "integer",
+              "description": "Total number of items"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/ResourceBundle"
+              }
+            }
+          }
+        },
+        "Error": {
+          "type": "object",
+          "description": "Error response",
+          "required": [
+            "code",
+            "reason"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Error ID"
+            },
+            "kind": {
+              "type": "string",
+              "description": "Resource kind",
+              "example": "Error"
+            },
+            "href": {
+              "type": "string",
+              "description": "API href reference"
+            },
+            "code": {
+              "type": "string",
+              "description": "Error code"
+            },
+            "reason": {
+              "type": "string",
+              "description": "Human-readable error message"
+            },
+            "operation_id": {
+              "type": "string",
+              "description": "Request operation ID for tracing"
+            }
+          }
+        },
+        "HealthStatus": {
+          "type": "object",
+          "description": "Health check response",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "degraded",
+                "unavailable"
+              ],
+              "description": "Health status"
+            }
           }
         }
       }
     }
   }
-},
+,
         dom_id: '#swagger-ui',
         deepLinking: true,
         presets: [
