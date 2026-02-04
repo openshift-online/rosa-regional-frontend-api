@@ -39,8 +39,9 @@ test-coverage:
 	go tool cover -html=coverage.out -o coverage.html
 
 # Run e2e tests
+# go test -v ./test/e2e
 test-e2e:
-	go test -v ./test/e2e
+	ginkgo -v ./test/e2e
 
 # Run linter
 lint:

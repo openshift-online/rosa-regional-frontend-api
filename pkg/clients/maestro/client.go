@@ -99,7 +99,16 @@ func NewClient(cfg config.MaestroConfig, logger *slog.Logger) *Client {
 
 	// Parse the gRPC URL to extract just the host:port (without scheme)
 	grpcURL := cfg.GRPCBaseURL
-	if parsedGRPC, err := url.Parse(cfg.GRPCBaseURL); err == nil && parsedGRPC.Host != "" {
+	parsedGRPC, err := url.Parse(cfg.GRPCBaseURL)
+	if err != nil {
+		logger.Error("failed to parse gRPC URL, using original value",
+			"grpc_url", cfg.GRPCBaseURL,
+			"error", err)
+	} else if parsedGRPC.Host == "" {
+		logger.Warn("parsed gRPC URL has empty host, using original value",
+			"grpc_url", cfg.GRPCBaseURL)
+	} else {
+		// Successfully parsed and has a host - use the host:port portion
 		grpcURL = parsedGRPC.Host
 	}
 

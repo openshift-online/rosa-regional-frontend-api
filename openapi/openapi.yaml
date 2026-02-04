@@ -213,8 +213,8 @@ paths:
     post:
       summary: Create manifestwork for a cluster
       description: |
-        Creates manifestwork against a target consumer identified by cluster_id.
-        This endpoint will create the necessary work manifest for the specified cluster.
+        Creates manifestwork for the specified cluster identified by cluster_id.
+        This endpoint creates the necessary work manifest for the target cluster.
       operationId: createWork
       tags:
         - Work
@@ -257,6 +257,12 @@ paths:
                 $ref: '#/components/schemas/Error'
         '500':
           description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Bad Gateway - Maestro error
           content:
             application/json:
               schema:
@@ -481,7 +487,7 @@ components:
       properties:
         cluster_id:
           type: string
-          description: Unique identifier of the target cluster/consumer
+          description: Unique identifier of the target cluster
         data:
           type: object
           description: |
@@ -497,6 +503,7 @@ components:
         - kind
         - href
         - cluster_id
+        - name
       properties:
         id:
           type: string
@@ -511,6 +518,10 @@ components:
         cluster_id:
           type: string
           description: Cluster ID this work is associated with
+        name:
+          type: string
+          description: Name of the manifestwork resource
+          example: rosa-work-cluster-123
         created_at:
           type: string
           format: date-time
