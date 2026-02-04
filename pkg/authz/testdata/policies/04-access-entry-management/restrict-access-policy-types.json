@@ -1,0 +1,110 @@
+{
+  "id": "access-entry-003",
+  "name": "Restrict which access policies can be associated",
+  "description": "Policy that restricts which ROSA access policies can be associated with access entries, preventing admin-level grants.",
+  "source": "https://docs.openshift.com/rosa/rosa_architecture/rosa-sts-about-iam-resources.html",
+  "policy": {
+    "version": "v0",
+    "statements": [
+      {
+        "sid": "AllowAssociateViewAndEditPolicies",
+        "effect": "Allow",
+        "conditions": {
+          "ArnLike": {
+            "rosa:policyArn": [
+              "arn:aws:rosa::aws:cluster-access-policy/ROSAViewPolicy",
+              "arn:aws:rosa::aws:cluster-access-policy/ROSAEditPolicy"
+            ]
+          }
+        },
+        "actions": [
+          "rosa:AssociateAccessPolicy"
+        ],
+        "resources": [
+          "*"
+        ]
+      },
+      {
+        "sid": "DenyAssociateAdminPolicies",
+        "effect": "Deny",
+        "conditions": {
+          "ArnLike": {
+            "rosa:policyArn": [
+              "arn:aws:rosa::aws:cluster-access-policy/ROSAClusterAdminPolicy",
+              "arn:aws:rosa::aws:cluster-access-policy/ROSAAdminPolicy"
+            ]
+          }
+        },
+        "actions": [
+          "rosa:AssociateAccessPolicy"
+        ],
+        "resources": [
+          "*"
+        ]
+      },
+      {
+        "sid": "AllowOtherAccessEntryOperations",
+        "effect": "Allow",
+        "actions": [
+          "rosa:CreateAccessEntry",
+          "rosa:DeleteAccessEntry",
+          "rosa:DescribeAccessEntry",
+          "rosa:ListAccessEntries",
+          "rosa:DisassociateAccessPolicy",
+          "rosa:ListAssociatedAccessPolicies",
+          "rosa:ListAccessPolicies"
+        ],
+        "resources": [
+          "*"
+        ]
+      }
+    ]
+  },
+  "testCases": [
+    {
+      "description": "User can associate view policy",
+      "request": {
+        "action": "rosa:AssociateAccessPolicy",
+        "resource": "arn:aws:rosa:us-west-2:111122223333:access-entry/my-cluster/role/dev",
+        "context": {
+          "rosa:policyArn": "arn:aws:rosa::aws:cluster-access-policy/ROSAViewPolicy"
+        }
+      },
+      "expectedResult": "ALLOW"
+    },
+    {
+      "description": "User can associate edit policy",
+      "request": {
+        "action": "rosa:AssociateAccessPolicy",
+        "resource": "arn:aws:rosa:us-west-2:111122223333:access-entry/my-cluster/role/dev",
+        "context": {
+          "rosa:policyArn": "arn:aws:rosa::aws:cluster-access-policy/ROSAEditPolicy"
+        }
+      },
+      "expectedResult": "ALLOW"
+    },
+    {
+      "description": "User cannot associate cluster admin policy",
+      "request": {
+        "action": "rosa:AssociateAccessPolicy",
+        "resource": "arn:aws:rosa:us-west-2:111122223333:access-entry/my-cluster/role/dev",
+        "context": {
+          "rosa:policyArn": "arn:aws:rosa::aws:cluster-access-policy/ROSAClusterAdminPolicy"
+        }
+      },
+      "expectedResult": "DENY"
+    },
+    {
+      "description": "User cannot associate admin policy",
+      "request": {
+        "action": "rosa:AssociateAccessPolicy",
+        "resource": "arn:aws:rosa:us-west-2:111122223333:access-entry/my-cluster/role/dev",
+        "context": {
+          "rosa:policyArn": "arn:aws:rosa::aws:cluster-access-policy/ROSAAdminPolicy"
+        }
+      },
+      "expectedResult": "DENY"
+    }
+  ],
+  "notes": "This is a key security control to prevent privilege escalation through access entries. Team leads can grant view/edit access but not admin access."
+}

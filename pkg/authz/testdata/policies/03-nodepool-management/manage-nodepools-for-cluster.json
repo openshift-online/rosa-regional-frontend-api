@@ -1,0 +1,64 @@
+{
+  "id": "nodepool-001",
+  "name": "Manage node pools for a specific cluster",
+  "description": "Policy that grants the ability to create, update, delete, and describe node pools for a specific ROSA cluster only.",
+  "source": "https://docs.openshift.com/rosa/rosa_architecture/rosa-sts-about-iam-resources.html",
+  "policy": {
+    "version": "v0",
+    "statements": [
+      {
+        "sid": "AllowNodePoolManagement",
+        "effect": "Allow",
+        "actions": [
+          "rosa:CreateNodePool",
+          "rosa:DeleteNodePool",
+          "rosa:DescribeNodePool",
+          "rosa:ListNodePools",
+          "rosa:UpdateNodePoolConfig",
+          "rosa:UpdateNodePoolVersion",
+          "rosa:TagResource",
+          "rosa:UntagResource"
+        ],
+        "resources": [
+          "arn:aws:rosa:us-west-2:111122223333:cluster/prod-cluster",
+          "arn:aws:rosa:us-west-2:111122223333:nodepool/prod-cluster/*/*"
+        ]
+      }
+    ]
+  },
+  "testCases": [
+    {
+      "description": "User can create node pool for prod-cluster",
+      "request": {
+        "action": "rosa:CreateNodePool",
+        "resource": "arn:aws:rosa:us-west-2:111122223333:cluster/prod-cluster"
+      },
+      "expectedResult": "ALLOW"
+    },
+    {
+      "description": "User can update node pool config",
+      "request": {
+        "action": "rosa:UpdateNodePoolConfig",
+        "resource": "arn:aws:rosa:us-west-2:111122223333:nodepool/prod-cluster/workers/abc123"
+      },
+      "expectedResult": "ALLOW"
+    },
+    {
+      "description": "User cannot create node pool for different cluster",
+      "request": {
+        "action": "rosa:CreateNodePool",
+        "resource": "arn:aws:rosa:us-west-2:111122223333:cluster/dev-cluster"
+      },
+      "expectedResult": "DENY"
+    },
+    {
+      "description": "User cannot delete the cluster itself",
+      "request": {
+        "action": "rosa:DeleteCluster",
+        "resource": "arn:aws:rosa:us-west-2:111122223333:cluster/prod-cluster"
+      },
+      "expectedResult": "DENY"
+    }
+  ],
+  "notes": "NodePool ARN format is arn:aws:rosa:region:account:nodepool/cluster-name/nodepool-name/uuid. The wildcard covers all node pools in the cluster."
+}

@@ -1,0 +1,73 @@
+{
+  "id": "basic-004",
+  "name": "Read-only access to all ROSA resources",
+  "description": "Policy that grants a user read-only access to all ROSA resources including clusters, node pools, and access entries.",
+  "source": "https://docs.openshift.com/rosa/rosa_architecture/rosa-sts-about-iam-resources.html",
+  "policy": {
+    "version": "v0",
+    "statements": [
+      {
+        "effect": "Allow",
+        "actions": [
+          "rosa:DescribeCluster",
+          "rosa:DescribeNodePool",
+          "rosa:DescribeUpdate",
+          "rosa:DescribeAccessEntry",
+          "rosa:ListClusters",
+          "rosa:ListNodePools",
+          "rosa:ListUpdates",
+          "rosa:ListAccessEntries",
+          "rosa:ListAccessPolicies",
+          "rosa:ListAssociatedAccessPolicies",
+          "rosa:ListTagsForResource"
+        ],
+        "resources": [
+          "*"
+        ]
+      }
+    ]
+  },
+  "testCases": [
+    {
+      "description": "User can describe any cluster",
+      "request": {
+        "action": "rosa:DescribeCluster",
+        "resource": "arn:aws:rosa:us-west-2:111122223333:cluster/prod-cluster"
+      },
+      "expectedResult": "ALLOW"
+    },
+    {
+      "description": "User can list node pools",
+      "request": {
+        "action": "rosa:ListNodePools",
+        "resource": "arn:aws:rosa:us-west-2:111122223333:cluster/prod-cluster"
+      },
+      "expectedResult": "ALLOW"
+    },
+    {
+      "description": "User cannot create clusters",
+      "request": {
+        "action": "rosa:CreateCluster",
+        "resource": "*"
+      },
+      "expectedResult": "DENY"
+    },
+    {
+      "description": "User cannot update cluster config",
+      "request": {
+        "action": "rosa:UpdateClusterConfig",
+        "resource": "arn:aws:rosa:us-west-2:111122223333:cluster/prod-cluster"
+      },
+      "expectedResult": "DENY"
+    },
+    {
+      "description": "User cannot tag resources",
+      "request": {
+        "action": "rosa:TagResource",
+        "resource": "arn:aws:rosa:us-west-2:111122223333:cluster/prod-cluster"
+      },
+      "expectedResult": "DENY"
+    }
+  ],
+  "notes": "Suitable for auditors, monitoring systems, or developers who need visibility but no modification rights."
+}

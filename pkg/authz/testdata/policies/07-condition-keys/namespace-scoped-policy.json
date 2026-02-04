@@ -1,0 +1,103 @@
+{
+  "id": "condition-003",
+  "name": "Restrict access policies to specific namespaces",
+  "description": "Policy that restricts which namespaces can be specified when associating access policies. Team can only grant access to their own namespace.",
+  "source": "https://docs.openshift.com/rosa/rosa_architecture/rosa-sts-about-iam-resources.html",
+  "policy": {
+    "version": "v0",
+    "statements": [
+      {
+        "sid": "AllowAssociateToOwnNamespace",
+        "effect": "Allow",
+        "conditions": {
+          "ForAllValues:StringEquals": {
+            "rosa:namespaces": [
+              "team-${aws:PrincipalTag/Team}"
+            ]
+          },
+          "StringEquals": {
+            "rosa:accessScope": "namespace"
+          }
+        },
+        "actions": [
+          "rosa:AssociateAccessPolicy"
+        ],
+        "resources": [
+          "*"
+        ]
+      },
+      {
+        "sid": "DenyClusterWideAccess",
+        "effect": "Deny",
+        "conditions": {
+          "StringEquals": {
+            "rosa:accessScope": "cluster"
+          }
+        },
+        "actions": [
+          "rosa:AssociateAccessPolicy"
+        ],
+        "resources": [
+          "*"
+        ]
+      }
+    ]
+  },
+  "testCases": [
+    {
+      "description": "Team A member can grant access to team-a namespace",
+      "principal": {
+        "tags": {
+          "Team": "a"
+        }
+      },
+      "request": {
+        "action": "rosa:AssociateAccessPolicy",
+        "resource": "arn:aws:rosa:us-west-2:111122223333:access-entry/my-cluster/role/dev",
+        "context": {
+          "rosa:namespaces": [
+            "team-a"
+          ],
+          "rosa:accessScope": "namespace"
+        }
+      },
+      "expectedResult": "ALLOW"
+    },
+    {
+      "description": "Team A member cannot grant access to team-b namespace",
+      "principal": {
+        "tags": {
+          "Team": "a"
+        }
+      },
+      "request": {
+        "action": "rosa:AssociateAccessPolicy",
+        "resource": "arn:aws:rosa:us-west-2:111122223333:access-entry/my-cluster/role/dev",
+        "context": {
+          "rosa:namespaces": [
+            "team-b"
+          ],
+          "rosa:accessScope": "namespace"
+        }
+      },
+      "expectedResult": "DENY"
+    },
+    {
+      "description": "Cannot grant cluster-wide access",
+      "principal": {
+        "tags": {
+          "Team": "a"
+        }
+      },
+      "request": {
+        "action": "rosa:AssociateAccessPolicy",
+        "resource": "arn:aws:rosa:us-west-2:111122223333:access-entry/my-cluster/role/dev",
+        "context": {
+          "rosa:accessScope": "cluster"
+        }
+      },
+      "expectedResult": "DENY"
+    }
+  ],
+  "notes": "Enables namespace-level delegation. Team leads can manage access within their namespace but cannot affect other namespaces or cluster-wide settings."
+}
