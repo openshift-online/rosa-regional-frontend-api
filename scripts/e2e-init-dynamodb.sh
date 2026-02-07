@@ -90,44 +90,6 @@ create_table "rosa-authz-group-members" \
             "Projection": {"ProjectionType": "ALL"}
         }]'
 
-# 5. Policies table (PK: accountId, SK: policyId)
-create_table "rosa-authz-policies" \
-    --attribute-definitions \
-        AttributeName=accountId,AttributeType=S \
-        AttributeName=policyId,AttributeType=S \
-    --key-schema \
-        AttributeName=accountId,KeyType=HASH \
-        AttributeName=policyId,KeyType=RANGE
-
-# 6. Attachments table (PK: accountId, SK: attachmentId, GSIs: target-index, policy-index)
-create_table "rosa-authz-attachments" \
-    --attribute-definitions \
-        AttributeName=accountId,AttributeType=S \
-        AttributeName=attachmentId,AttributeType=S \
-        'AttributeName=accountId#targetType#targetId,AttributeType=S' \
-        AttributeName=policyId,AttributeType=S \
-        'AttributeName=accountId#policyId,AttributeType=S' \
-    --key-schema \
-        AttributeName=accountId,KeyType=HASH \
-        AttributeName=attachmentId,KeyType=RANGE \
-    --global-secondary-indexes \
-        '[{
-            "IndexName": "target-index",
-            "KeySchema": [
-                {"AttributeName": "accountId#targetType#targetId", "KeyType": "HASH"},
-                {"AttributeName": "policyId", "KeyType": "RANGE"}
-            ],
-            "Projection": {"ProjectionType": "ALL"}
-        },
-        {
-            "IndexName": "policy-index",
-            "KeySchema": [
-                {"AttributeName": "accountId#policyId", "KeyType": "HASH"},
-                {"AttributeName": "attachmentId", "KeyType": "RANGE"}
-            ],
-            "Projection": {"ProjectionType": "ALL"}
-        }]'
-
 # Seed privileged account for e2e testing
 echo "Seeding privileged account for e2e tests..."
 if aws dynamodb get-item --endpoint-url "$ENDPOINT" --region "$REGION" \

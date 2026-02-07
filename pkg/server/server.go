@@ -51,7 +51,6 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	apiRouter.Use(middleware.Identity)
 
 	// Initialize authz components if enabled
-	var authorizer authz.Authorizer
 	var privilegedMiddleware *middleware.Privileged
 	var accountCheckMiddleware *middleware.AccountCheck
 	var authzMiddleware *middleware.Authz
@@ -76,17 +75,17 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 			}
 		}
 
-		// Create authorizer
-		authorizer = authz.New(cfg.Authz, dynamoClient, avpClient, logger)
+		// Create authorizer (implements both Checker and Service)
+		authorizer := authz.New(cfg.Authz, dynamoClient, avpClient, logger)
 
 		// Create authz middleware
 		privilegedMiddleware = middleware.NewPrivileged(authorizer, logger)
 		accountCheckMiddleware = middleware.NewAccountCheck(authorizer, logger)
-		authzMiddleware = middleware.NewAuthz(authorizer, cfg.Authz.Enabled, logger)
+		authzMiddleware = middleware.NewAuthz(authorizer, cfg.Authz.Enabled, cfg.Authz.AWSRegion, logger)
 
 		// Create authz handlers
 		accountsHandler := apphandlers.NewAccountsHandler(authorizer, logger)
-		authzHandler := apphandlers.NewAuthzHandler(authorizer, logger)
+		authzHandler := apphandlers.NewAuthzHandler(authorizer, authorizer, logger)
 
 		// Account management routes (privileged only)
 		accountsRouter := apiRouter.PathPrefix("/api/v0/accounts").Subrouter()

@@ -155,7 +155,7 @@ func (c *APIClient) CreateAdmin(accountID, principalArn string) error {
 }
 
 // CreatePolicy creates a policy and returns its ID
-func (c *APIClient) CreatePolicy(accountID, name, description string, policy V0Policy) (string, error) {
+func (c *APIClient) CreatePolicy(accountID, name, description string, policy string) (string, error) {
 	body := map[string]interface{}{
 		"name":        name,
 		"description": description,

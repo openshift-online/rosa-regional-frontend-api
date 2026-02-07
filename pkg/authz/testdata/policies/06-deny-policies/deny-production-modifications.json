@@ -2,37 +2,12 @@
   "id": "deny-002",
   "name": "Deny modifications to production clusters",
   "description": "Policy that denies any write operations on clusters tagged as production environment. Protects production from accidental changes.",
-  "source": "https://docs.openshift.com/rosa/rosa_architecture/rosa-sts-about-iam-resources.html",
-  "policy": {
-    "version": "v0",
-    "statements": [
-      {
-        "sid": "DenyProductionModifications",
-        "effect": "Deny",
-        "conditions": {
-          "StringEquals": {
-            "rosa:ResourceTag/Environment": "production"
-          }
-        },
-        "actions": [
-          "rosa:DeleteCluster",
-          "rosa:DeleteNodePool",
-          "rosa:UpdateClusterConfig",
-          "rosa:UpdateClusterVersion",
-          "rosa:UpdateNodePoolConfig",
-          "rosa:UpdateNodePoolVersion"
-        ],
-        "resources": [
-          "*"
-        ]
-      }
-    ]
-  },
+  "policyFile": "deny-production-modifications.cedar",
   "testCases": [
     {
       "description": "Cannot delete production cluster",
       "request": {
-        "action": "rosa:DeleteCluster",
+        "action": "DeleteCluster",
         "resource": "arn:aws:rosa:us-west-2:111122223333:cluster/prod-cluster",
         "resourceTags": {
           "Environment": "production"
@@ -43,7 +18,7 @@
     {
       "description": "Cannot update production nodepool",
       "request": {
-        "action": "rosa:UpdateNodePoolConfig",
+        "action": "UpdateNodePool",
         "resource": "arn:aws:rosa:us-west-2:111122223333:nodepool/prod-cluster/workers/abc123",
         "resourceTags": {
           "Environment": "production"
@@ -54,7 +29,7 @@
     {
       "description": "Can delete development cluster",
       "request": {
-        "action": "rosa:DeleteCluster",
+        "action": "DeleteCluster",
         "resource": "arn:aws:rosa:us-west-2:111122223333:cluster/dev-cluster",
         "resourceTags": {
           "Environment": "development"
@@ -65,7 +40,7 @@
     {
       "description": "Can describe production cluster (read operations allowed)",
       "request": {
-        "action": "rosa:DescribeCluster",
+        "action": "DescribeCluster",
         "resource": "arn:aws:rosa:us-west-2:111122223333:cluster/prod-cluster",
         "resourceTags": {
           "Environment": "production"

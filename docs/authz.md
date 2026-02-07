@@ -7,66 +7,97 @@ This document describes the Cedar/AVP-based authorization service for the ROSA R
 The authorization service provides fine-grained access control for ROSA operations using:
 
 - **Amazon Verified Permissions (AVP)** for policy evaluation
-- **Cedar** as the policy language
-- **DynamoDB** for storing accounts, admins, groups, policies, and attachments
-- **IAM-like v0 policy format** that gets translated to Cedar
+- **Cedar** as the policy language (policies are written directly in Cedar)
+- **DynamoDB** for storing accounts, admins, and groups
 
 ## Architecture
 
 ```
 Request
-    ↓
+    |
 Identity Middleware (extract accountId, callerArn from headers)
-    ↓
+    |
 Privileged Check
-    ├── Is accountId in configmap? → ALLOW (bypass all)
-    ├── Is accountId in DB with privileged=true? → ALLOW (bypass all)
-    └── Neither → continue
-    ↓
+    |-- Is accountId in DB with privileged=true? -> ALLOW (bypass all)
+    +-- Not privileged -> continue
+    |
 Account Provisioned Check
-    ├── Is accountId in DB with privileged=false? → continue
-    └── Not in DB → 403 "Account not provisioned"
-    ↓
+    |-- Is accountId in DB with privileged=false? -> continue
+    +-- Not in DB -> 403 "Account not provisioned"
+    |
 Admin Check
-    ├── Is callerArn an admin for this account? → ALLOW
-    └── Not admin → continue
-    ↓
+    |-- Is callerArn an admin for this account? -> ALLOW
+    +-- Not admin -> continue
+    |
 AVP Authorization
-    ├── Get user's group memberships from DynamoDB
-    ├── Build AVP IsAuthorized request
-    ├── Call AVP with policyStoreId from DB
-    └── Return ALLOW/DENY based on AVP decision
-    ↓
+    |-- Get user's group memberships from DynamoDB
+    |-- Build AVP IsAuthorized request
+    |-- Call AVP with policyStoreId from DB
+    +-- Return ALLOW/DENY based on AVP decision
+    |
 Handler
 ```
 
-## Package Structure
+## Policy Lifecycle
 
 ```
-pkg/authz/
-├── authz.go              # Main Authorizer interface and implementation
-├── config.go             # Configuration types
-├── client/
-│   ├── interface.go      # Client interfaces (for mocking)
-│   ├── dynamodb.go       # DynamoDB client wrapper
-│   └── avp.go            # AWS Verified Permissions client wrapper
-├── policy/
-│   ├── types.go          # V0Policy, Statement types
-│   ├── translator.go     # IAM v0 format -> Cedar translator
-│   └── validation.go     # Policy validation
-├── store/
-│   ├── accounts.go       # Account operations
-│   ├── admins.go         # Admin CRUD
-│   ├── groups.go         # Group CRUD
-│   ├── members.go        # Group membership CRUD
-│   ├── policies.go       # Policy template CRUD
-│   └── attachments.go    # Policy attachment CRUD
-├── privileged/
-│   └── privileged.go     # Privileged account check (configmap + DB)
-└── schema/
-    ├── schema.go         # Cedar schema embedding
-    ├── rosa.cedarschema  # Human-readable Cedar schema
-    └── rosa.cedarschema.json # JSON schema for AVP
+1. Create Policy Template
+   POST /api/v0/authz/policies { name, description, policy (Cedar with ?principal) }
+       |
+   authz.CreatePolicy()
+       |-- Get account's policyStoreId from DynamoDB
+       |-- Encode name+description as JSON in AVP Description field
+       |-- avpClient.CreatePolicyTemplate(policyStoreId, statement, description)
+       |       |
+       |       |-- [Production] AVP stores template with ?principal slot
+       |       +-- [Testing]    MockAVPClient stores template in memory
+       |
+       +-- Return policyId (= AVP PolicyTemplateId)
+
+2. Attach Policy to Group/User
+   POST /api/v0/authz/attachments { policyId, targetType, targetId }
+       |
+   authz.AttachPolicy()
+       |-- Get account's policyStoreId from DynamoDB
+       |-- Build principal entity (ROSA::Group or ROSA::Principal)
+       |-- avpClient.CreatePolicy(TemplateLinked { templateId, principal })
+       |       |
+       |       |-- [Production] AVP creates template-linked policy
+       |       |                ?principal bound to concrete entity
+       |       |
+       |       +-- [Testing]    MockAVPClient resolves ?principal client-side
+       |                        Stores resolved static Cedar text in memory
+       |
+       +-- Return attachment (attachmentId = AVP policy ID)
+
+3. Authorization Check
+   Request with X-Amz-Account-Id, X-Amz-Caller-Arn headers
+       |
+   authz.Authorize()
+       |-- Get group memberships from DynamoDB
+       |-- Build IsAuthorized request (principal, action, resource, groups, tags)
+       |-- avpClient.IsAuthorized(policyStoreId, ...)
+       |       |
+       |       |-- [Production] AVP evaluates all policies (including template-linked)
+       |       |
+       |       +-- [Testing]    MockAVPClient syncs resolved policies to cedar-agent
+       |                        cedar-agent evaluates Cedar policies locally
+       |
+       +-- Return ALLOW / DENY
+
+4. Update Policy Template
+   PUT /api/v0/authz/policies/{id} { name, description, policy }
+       |
+   authz.UpdatePolicy()
+       |-- avpClient.UpdatePolicyTemplate(templateId, newStatement)
+       |       |
+       |       |-- [Production] AVP updates template
+       |       |                Auto-propagates to all template-linked policies
+       |       |
+       |       +-- [Testing]    MockAVPClient updates template in memory
+       |                        Re-resolves all linked policies, syncs to cedar-agent
+       |
+       +-- Return updated policy
 ```
 
 ## Configuration
@@ -75,40 +106,18 @@ The authorization service is configured via the `authz.Config` struct:
 
 ```go
 type Config struct {
-    AWSRegion              string // AWS region for AVP and DynamoDB
-    PrivilegedAccountsFile string // Path to configmap with privileged accounts
-    AccountsTableName      string // DynamoDB table: rosa-authz-accounts
-    AdminsTableName        string // DynamoDB table: rosa-authz-admins
-    GroupsTableName        string // DynamoDB table: rosa-authz-groups
-    MembersTableName       string // DynamoDB table: rosa-authz-group-members
-    PoliciesTableName      string // DynamoDB table: rosa-authz-policies
-    AttachmentsTableName   string // DynamoDB table: rosa-authz-attachments
-    Enabled                bool   // Enable Cedar/AVP authorization
+    AWSRegion         string // AWS region for AVP and DynamoDB
+    AccountsTableName string // DynamoDB table: rosa-authz-accounts
+    AdminsTableName   string // DynamoDB table: rosa-authz-admins
+    GroupsTableName   string // DynamoDB table: rosa-authz-groups
+    MembersTableName  string // DynamoDB table: rosa-authz-group-members
+    Enabled           bool   // Enable Cedar/AVP authorization
 }
 ```
 
-### Environment Configuration
-
-Set `cfg.Authz.Enabled = true` to enable Cedar/AVP authorization. When disabled, the API falls back to the legacy allowlist behavior.
-
 ## Privileged Accounts
 
-Privileged accounts bypass all authorization checks. They are defined in two sources:
-
-### 1. Configmap File (Bootstrap)
-
-Located at `/etc/rosa/privileged-accounts.txt`:
-
-```
-111122223333
-444455556666
-```
-
-One AWS account ID per line. Comments (lines starting with `#`) are ignored.
-
-### 2. Database
-
-Accounts in `rosa-authz-accounts` table with `privileged: true`.
+Privileged accounts bypass all authorization checks. They are stored in the `rosa-authz-accounts` DynamoDB table with `privileged: true`.
 
 ### Privileged Account Behavior
 
@@ -138,13 +147,13 @@ Accounts in `rosa-authz-accounts` table with `privileged: true`.
 
 ### Policy Management
 
-| Method | Path                          | Description            |
-| ------ | ----------------------------- | ---------------------- |
-| POST   | `/api/v0/authz/policies`      | Create policy template |
-| GET    | `/api/v0/authz/policies`      | List policies          |
-| GET    | `/api/v0/authz/policies/{id}` | Get policy             |
-| PUT    | `/api/v0/authz/policies/{id}` | Update policy          |
-| DELETE | `/api/v0/authz/policies/{id}` | Delete policy          |
+| Method | Path                          | Description   |
+| ------ | ----------------------------- | ------------- |
+| POST   | `/api/v0/authz/policies`      | Create policy |
+| GET    | `/api/v0/authz/policies`      | List policies |
+| GET    | `/api/v0/authz/policies/{id}` | Get policy    |
+| PUT    | `/api/v0/authz/policies/{id}` | Update policy |
+| DELETE | `/api/v0/authz/policies/{id}` | Delete policy |
 
 ### Group Management
 
@@ -173,139 +182,116 @@ Accounts in `rosa-authz-accounts` table with `privileged: true`.
 | GET    | `/api/v0/authz/admins`       | List admins  |
 | DELETE | `/api/v0/authz/admins/{arn}` | Remove admin |
 
-## Policy Format (v0)
+## Policy Format
 
-Policies use an IAM-like JSON format:
+Policies are written directly in [Cedar](https://docs.cedarpolicy.com/). The `?principal` placeholder is used as a template variable — when a policy is attached to a user or group, the system resolves `?principal` to the concrete principal entity.
 
-```json
-{
-  "version": "v0",
-  "statements": [
-    {
-      "sid": "AllowDevClusters",
-      "effect": "Allow",
-      "actions": ["rosa:CreateCluster", "rosa:DeleteCluster"],
-      "resources": ["*"],
-      "conditions": {
-        "StringEquals": {
-          "rosa:ResourceTag/Environment": "development"
-        }
-      }
-    }
-  ]
-}
+### Example: Allow development cluster access
+
+```cedar
+permit(
+  ?principal,
+  action in [ROSA::Action::"CreateCluster", ROSA::Action::"DeleteCluster",
+             ROSA::Action::"DescribeCluster", ROSA::Action::"UpdateCluster"],
+  resource
+)
+when { resource.tags["Environment"] == "development" };
 ```
 
-**Note:** No `principals` field - policies are templates. Principals are specified when attaching.
+### Example: Deny production deletions
+
+```cedar
+forbid(
+  ?principal,
+  action == ROSA::Action::"DeleteCluster",
+  resource
+)
+when { resource.tags["Environment"] == "production" };
+```
+
+### Example: Require MFA for destructive operations
+
+```cedar
+forbid(
+  ?principal,
+  action in [ROSA::Action::"DeleteCluster", ROSA::Action::"DeleteNodePool"],
+  resource
+)
+when { context.mfaPresent == "false" };
+```
 
 ### Attachment Workflow
 
-1. Create a policy template (no principal)
+1. Create a Cedar policy template in AVP (uses `?principal` placeholder)
 2. Attach the policy to a user or group
-3. The system translates the policy to Cedar with the principal clause and creates it in AVP
+3. AVP creates a template-linked policy binding the concrete principal
 
-## Supported Condition Keys
-
-| Key                          | Description                            |
-| ---------------------------- | -------------------------------------- |
-| `rosa:ResourceTag/${TagKey}` | Tags on existing resources             |
-| `rosa:RequestTag/${TagKey}`  | Tags in create request                 |
-| `rosa:TagKeys`               | List of tag keys in request            |
-| `aws:PrincipalArn`           | Caller's ARN (from headers)            |
-| `aws:PrincipalAccount`       | Caller's account ID                    |
-| `rosa:principalArn`          | Principal ARN in access entry requests |
-
-## Condition Operators
-
-The policy translator supports a subset of AWS IAM condition operators. The following tables show which operators are implemented and which are not yet available.
-
-### Implemented Operators
-
-| Operator                       | Category  | Description                                  | Cedar Translation                         |
-| ------------------------------ | --------- | -------------------------------------------- | ----------------------------------------- |
-| `StringEquals`                 | String    | Exact case-sensitive string match            | `key == "value"`                          |
-| `StringNotEquals`              | String    | Negated exact string match                   | `key != "value"`                          |
-| `StringLike`                   | String    | Case-sensitive wildcard match (`*`, `?`)     | `key like "pattern"`                      |
-| `StringNotLike`                | String    | Negated wildcard match                       | `!(key like "pattern")`                   |
-| `ArnEquals`                    | ARN       | Exact ARN match                              | `key == "arn"`                            |
-| `ArnNotEquals`                 | ARN       | Negated exact ARN match                      | `key != "arn"`                            |
-| `ArnLike`                      | ARN       | Wildcard ARN match                           | `key like "arn-pattern"`                  |
-| `ArnNotLike`                   | ARN       | Negated wildcard ARN match                   | `!(key like "arn-pattern")`               |
-| `Bool`                         | Boolean   | Boolean value check                          | `key == true/false`                       |
-| `NumericEquals`                | Numeric   | Exact numeric comparison                     | `key == 100`                              |
-| `NumericNotEquals`             | Numeric   | Negated numeric comparison                   | `key != 100`                              |
-| `NumericLessThan`              | Numeric   | Less than comparison                         | `key < 100`                               |
-| `NumericLessThanEquals`        | Numeric   | Less than or equal                           | `key <= 100`                              |
-| `NumericGreaterThan`           | Numeric   | Greater than comparison                      | `key > 100`                               |
-| `NumericGreaterThanEquals`     | Numeric   | Greater than or equal                        | `key >= 100`                              |
-| `DateEquals`                   | Date      | Exact date comparison                        | `datetime(key) == datetime("...")`        |
-| `DateNotEquals`                | Date      | Negated date comparison                      | `datetime(key) != datetime("...")`        |
-| `DateLessThan`                 | Date      | Date before comparison                       | `datetime(key) < datetime("...")`         |
-| `DateLessThanEquals`           | Date      | Date on or before                            | `datetime(key) <= datetime("...")`        |
-| `DateGreaterThan`              | Date      | Date after comparison                        | `datetime(key) > datetime("...")`         |
-| `DateGreaterThanEquals`        | Date      | Date on or after                             | `datetime(key) >= datetime("...")`        |
-| `IpAddress`                    | IP        | IP address or CIDR match                     | `ip(key).isInRange(ip("192.168.0.0/16"))` |
-| `NotIpAddress`                 | IP        | Negated IP address match                     | `!ip(key).isInRange(ip("..."))`           |
-| `BinaryEquals`                 | Binary    | Base64 binary comparison                     | `key == "base64value"`                    |
-| `Null`                         | Existence | Check if key exists                          | `has key` / `!has key`                    |
-| `ForAllValues:StringEquals`    | Set       | All values in request must be in allowed set | `key.containsAll([...])`                  |
-| `ForAnyValue:StringEquals`     | Set       | At least one value in request must match     | `key.containsAny([...])`                  |
-| `ForAllValues:StringNotEquals` | Set       | All values must not be in specified set      | `!key.containsAny([...])`                 |
-| `ForAnyValue:StringNotEquals`  | Set       | Any value must not be in specified set       | `!key.containsAll([...])`                 |
-| `ForAllValues:StringLike`      | Set       | All values match at least one pattern        | `(key like "p1" \|\| key like "p2")`      |
-| `ForAnyValue:StringLike`       | Set       | Any value matches at least one pattern       | `(key like "p1" \|\| key like "p2")`      |
-| `...IfExists` suffix           | Modifier  | Evaluate only if key exists                  | `(!has key \|\| (condition))`             |
-
-### Wildcard Patterns
-
-The `StringLike` and `ArnLike` operators support wildcards:
-
-- `*` matches any sequence of characters
-- `?` matches any single character (converted to `*` in Cedar)
-
-**Example:**
+### Create Policy Request
 
 ```json
 {
-  "ArnLike": {
-    "aws:PrincipalArn": "arn:aws:iam::*:role/Admin*"
-  }
+  "name": "DevClusterAccess",
+  "description": "Full access to development clusters",
+  "policy": "permit(\n  ?principal,\n  action,\n  resource\n)\nwhen { resource.tags[\"Environment\"] == \"development\" };"
 }
 ```
 
-### Not Yet Implemented Operators
-
-The following AWS IAM operators cannot be implemented in Cedar without context preprocessing:
-
-| Operator                    | Category | Description                    | Limitation                                                                                                                         |
-| --------------------------- | -------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `StringEqualsIgnoreCase`    | String   | Case-insensitive exact match   | No native support. Cedar lacks `.toLowerCase()`. Would require normalizing values before they enter the policy evaluation context. |
-| `StringNotEqualsIgnoreCase` | String   | Negated case-insensitive match | Same limitation as above.                                                                                                          |
-
 ## ROSA Actions Reference
+
+All actions use the `ROSA::Action` entity type in Cedar policies.
 
 ### Cluster Operations
 
-- `rosa:CreateCluster`, `rosa:DeleteCluster`, `rosa:DescribeCluster`, `rosa:ListClusters`
-- `rosa:UpdateCluster`, `rosa:UpdateClusterConfig`, `rosa:UpdateClusterVersion`
+- `CreateCluster`, `DeleteCluster`, `DescribeCluster`, `ListClusters`
+- `UpdateCluster`, `UpdateClusterConfig`, `UpdateClusterVersion`
 
 ### NodePool Operations
 
-- `rosa:CreateNodePool`, `rosa:DeleteNodePool`, `rosa:DescribeNodePool`, `rosa:ListNodePools`
-- `rosa:UpdateNodePool`, `rosa:ScaleNodePool`
+- `CreateNodePool`, `DeleteNodePool`, `DescribeNodePool`, `ListNodePools`
+- `UpdateNodePool`, `ScaleNodePool`
 
 ### Access Entry Operations
 
-- `rosa:CreateAccessEntry`, `rosa:DeleteAccessEntry`, `rosa:DescribeAccessEntry`
-- `rosa:ListAccessEntries`, `rosa:UpdateAccessEntry`
+- `CreateAccessEntry`, `DeleteAccessEntry`, `DescribeAccessEntry`
+- `ListAccessEntries`, `UpdateAccessEntry`
 
 ### Tagging Operations
 
-- `rosa:TagResource`, `rosa:UntagResource`, `rosa:ListTagsForResource`
+- `TagResource`, `UntagResource`, `ListTagsForResource`
 
 ### Other
 
-- `rosa:ListAccessPolicies`
+- `ListAccessPolicies`
+
+## Cedar Schema
+
+The ROSA Cedar schema defines the following entity types:
+
+- **`ROSA::Principal`** — Users identified by ARN
+- **`ROSA::Group`** — Groups that principals can be members of (parents of Principal)
+- **`ROSA::Resource`** — Base resource type with `tags: Map<String, String>`
+- **`ROSA::Cluster`** — Inherits from Resource
+- **`ROSA::NodePool`** — Inherits from Resource
+- **`ROSA::AccessEntry`** — Inherits from Resource
+
+The full schema is at `pkg/authz/schema/rosa.cedarschema`.
+
+## Context Attributes
+
+Cedar policies can reference context attributes passed with authorization requests:
+
+| Attribute          | Type               | Description                           |
+| ------------------ | ------------------ | ------------------------------------- |
+| `mfaPresent`       | String             | Whether MFA was used ("true"/"false") |
+| `principalArn`     | String             | Principal ARN in access entry ops     |
+| `principalTags`    | Map<String,String> | Tags associated with the principal    |
+| `tagKeys`          | Set<String>        | Tag keys being modified               |
+| `requestTags`      | Map<String,String> | Tags in create/tag requests           |
+| `accessScope`      | String             | "namespace" or "cluster"              |
+| `namespaces`       | Set<String>        | Kubernetes namespaces                 |
+| `kubernetesGroups` | Set<String>        | Kubernetes groups in access entries   |
+| `policyArn`        | String             | Access policy ARN                     |
+| `username`         | String             | Caller username                       |
 
 ## DynamoDB Tables
 
@@ -350,73 +336,58 @@ The following AWS IAM operators cannot be implemented in Cedar without context p
 
 **GSI: member-groups-index** (PK: `accountId#memberArn`, SK: `groupId`)
 
-### rosa-authz-policies
-
-| Attribute     | Type   | Key | Description                |
-| ------------- | ------ | --- | -------------------------- |
-| `accountId`   | String | PK  | AWS account ID             |
-| `policyId`    | String | SK  | UUID                       |
-| `name`        | String |     | Policy name                |
-| `description` | String |     | Optional                   |
-| `v0Policy`    | String |     | JSON of v0 policy template |
-| `createdAt`   | String |     | ISO8601                    |
-
-### rosa-authz-attachments
-
-| Attribute      | Type   | Key | Description                    |
-| -------------- | ------ | --- | ------------------------------ |
-| `accountId`    | String | PK  | AWS account ID                 |
-| `attachmentId` | String | SK  | UUID                           |
-| `policyId`     | String |     | References rosa-authz-policies |
-| `targetType`   | String |     | `user` or `group`              |
-| `targetId`     | String |     | ARN (user) or groupId (group)  |
-| `avpPolicyId`  | String |     | The actual policy ID in AVP    |
-| `createdAt`    | String |     | ISO8601                        |
-
-**GSI: target-index** (PK: `accountId#targetType#targetId`, SK: `policyId`)
-**GSI: policy-index** (PK: `accountId#policyId`, SK: `attachmentId`)
-
 ## Test Cases
 
-Policy test cases are located in `pkg/authz/testdata/policies/`. These JSON files define policies and expected authorization outcomes for testing the policy translator and documenting supported policy patterns.
+Policy test cases are located in `pkg/authz/testdata/policies/`. These JSON files define Cedar policies and expected authorization outcomes for testing.
 
 ### Directory Structure
 
 ```
 pkg/authz/testdata/policies/
-├── 01-basic-access/              # Basic read/list/describe operations
-├── 02-cluster-management/        # Create, update, delete cluster operations
-├── 03-nodepool-management/       # NodePool lifecycle operations
-├── 04-access-entry-management/   # Access entry and policy association
-├── 05-tag-based-access/          # ABAC with resource tags
-├── 06-deny-policies/             # Explicit deny scenarios
-├── 07-condition-keys/            # Condition key usage examples
-└── 08-complex-scenarios/         # Multi-statement, combined allow/deny
+|-- 01-basic-access/              # Basic read/list/describe operations
+|-- 02-cluster-management/        # Create, update, delete cluster operations
+|-- 03-nodepool-management/       # NodePool lifecycle operations
+|-- 04-access-entry-management/   # Access entry and policy association
+|-- 05-tag-based-access/          # ABAC with resource tags
+|-- 06-deny-policies/             # Explicit deny scenarios
+|-- 07-condition-keys/            # Condition key usage examples
++-- 08-complex-scenarios/         # Multi-statement, combined allow/deny
 ```
 
 ### Test Case Format
+
+Each test case is a JSON file with a companion `.cedar` file containing the Cedar policy text:
+
+**`list-clusters.json`:**
 
 ```json
 {
   "id": "unique-test-id",
   "name": "Descriptive name",
   "description": "What this policy accomplishes",
-  "policy": {
-    "Version": "2012-10-17",
-    "Statement": [...]
-  },
+  "policyFile": "list-clusters.cedar",
   "testCases": [
     {
       "description": "Test scenario",
       "request": {
-        "action": "rosa:ActionName",
-        "resource": "arn:aws:rosa:...",
-        "resourceTags": {"key": "value"}
+        "action": "ListClusters",
+        "resource": "*",
+        "resourceTags": { "Environment": "production" }
       },
-      "expectedResult": "ALLOW | DENY | NOT_EVALUATED"
+      "expectedResult": "ALLOW"
     }
   ]
 }
+```
+
+**`list-clusters.cedar`:**
+
+```cedar
+permit(
+  ?principal,
+  action == ROSA::Action::"ListClusters",
+  resource
+);
 ```
 
 ## Running Tests
@@ -425,12 +396,12 @@ pkg/authz/testdata/policies/
 # Run all authz package tests
 make test-authz
 
-# Run specific package tests
-make test-unit PKG=./pkg/authz/policy/...
+# Run E2E authz tests (requires podman-compose with cedar-agent + DynamoDB Local)
+make test-e2e-authz
 
 # Run all tests
 make test
-```
+````
 
 ## Example: Setting Up Authorization
 
@@ -445,23 +416,13 @@ curl -X POST /api/v0/authz/admins \
   -H "X-Amz-Account-Id: 777788889999" \
   -d '{"principalArn": "arn:aws:iam::777788889999:user/admin"}'
 
-# 3. Create a policy template
+# 3. Create a Cedar policy
 curl -X POST /api/v0/authz/policies \
   -H "X-Amz-Account-Id: 777788889999" \
   -d '{
     "name": "DevClusterAccess",
     "description": "Full access to development clusters",
-    "policy": {
-      "version": "v0",
-      "statements": [{
-        "effect": "Allow",
-        "actions": ["rosa:*"],
-        "resources": ["*"],
-        "conditions": {
-          "StringEquals": {"rosa:ResourceTag/Environment": "development"}
-        }
-      }]
-    }
+    "policy": "permit(\n  ?principal,\n  action,\n  resource\n)\nwhen { resource.tags[\"Environment\"] == \"development\" };"
   }'
 
 # 4. Create a group
@@ -483,3 +444,8 @@ curl -X POST /api/v0/authz/attachments \
     "targetId": "{groupId}"
   }'
 ```
+
+## Further Reading
+
+- [Cedar Language Reference](https://docs.cedarpolicy.com/)
+- [Amazon Verified Permissions Documentation](https://docs.aws.amazon.com/verifiedpermissions/)
