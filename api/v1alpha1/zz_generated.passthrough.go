@@ -78,7 +78,7 @@ type HostedClusterSpecPassthrough struct {
 	Autoscaling hypershiftv1beta1.ClusterAutoscaling `json:"autoscaling,omitempty"`
 	// autoNode specifies the configuration for automatic node provisioning and lifecycle management.
 	// +k8s:openapi-gen=true
-	// +hyperfleet:write-mode=service-set
+	// +hyperfleet:write-mode=mutable
 	// +optional
 	AutoNode hypershiftv1beta1.AutoNode `json:"autoNode,omitzero"`
 	// etcd specifies configuration for the control plane etcd cluster. The
@@ -103,7 +103,7 @@ type HostedClusterSpecPassthrough struct {
 	SSHKey corev1.LocalObjectReference `json:"sshKey"`
 	// issuerURL is an OIDC issuer URL which will be used as the issuer in all
 	// +k8s:openapi-gen=true
-	// +hyperfleet:write-mode=mutable
+	// +hyperfleet:write-mode=service-set
 	// +optional
 	IssuerURL string `json:"issuerURL,omitempty"`
 	// serviceAccountSigningKey is a local reference to a secret that must have a "key" key whose content must be the private key
@@ -112,7 +112,7 @@ type HostedClusterSpecPassthrough struct {
 	// +optional
 	ServiceAccountSigningKey *corev1.LocalObjectReference `json:"serviceAccountSigningKey,omitempty"`
 	// configuration specifies configuration for individual OCP components in the
-	// +k8s:openapi-gen=true
+	// +k8s:openapi-gen=false
 	// +hyperfleet:write-mode=service-set
 	// +optional
 	Configuration *hypershiftv1beta1.ClusterConfiguration `json:"configuration,omitempty"`
