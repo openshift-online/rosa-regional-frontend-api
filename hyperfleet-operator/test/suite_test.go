@@ -149,6 +149,7 @@ var _ = BeforeSuite(func() {
 	amPort = freePort()
 	out, err = runContainerCommand(containerTool, containerStartTimeout,
 		"run", "-d", "--rm",
+		"--storage-opt", "ignore_chown_errors=true",
 		"--name", amContainerName,
 		"-p", fmt.Sprintf("%s:9093", amPort),
 		"--pull=never",
