@@ -150,6 +150,8 @@ var _ = BeforeSuite(func() {
 	out, err = runContainerCommand(containerTool, containerStartTimeout,
 		"run", "-d", "--rm",
 		"--storage-opt", "ignore_chown_errors=true",
+		"--user", "0:0",
+		"--tmpfs", "/alertmanager:rw,exec",
 		"--name", amContainerName,
 		"-p", fmt.Sprintf("%s:9093", amPort),
 		"--pull=never",
