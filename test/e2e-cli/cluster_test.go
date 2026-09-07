@@ -470,7 +470,7 @@ var _ = Describe("ROSACTL CLI E2E Tests", Ordered, func() {
 			GinkgoWriter.Printf("[%s] silence probe — phase=%s\n", time.Now().Format(time.RFC3339), phase)
 
 			if phase == "" {
-				// Operator has not populated status yet; keep polling.
+				g.Expect(phase).NotTo(BeEmpty(), "waiting for operator to set cluster phase")
 				return
 			}
 
