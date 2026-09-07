@@ -469,6 +469,11 @@ var _ = Describe("ROSACTL CLI E2E Tests", Ordered, func() {
 			phase := cluster.Status.Phase
 			GinkgoWriter.Printf("[%s] silence probe — phase=%s\n", time.Now().Format(time.RFC3339), phase)
 
+			if phase == "" {
+				// Operator has not populated status yet; keep polling.
+				return
+			}
+
 			if phase == v1alpha1.ClusterPhaseReady {
 				if !sawInstalling {
 					g.Expect(sawInstalling).To(BeTrue(), "cluster became Ready before an installing silence was observed")
