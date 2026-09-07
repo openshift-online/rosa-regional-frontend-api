@@ -137,12 +137,21 @@ var _ = BeforeSuite(func() {
 
 	// ── Alertmanager ──
 
+	By("pulling Alertmanager image")
+	// Nested rootless podman in OpenShift CI can fail unpacking layers with lchown
+	// errors; pre-pull with ignore_chown_errors matches other integration containers.
+	out, err = runContainerCommand(containerTool, containerStartTimeout,
+		"pull", "--storage-opt", "ignore_chown_errors=true", alertmanagerImage,
+	)
+	Expect(err).NotTo(HaveOccurred(), "pull Alertmanager: %s", string(out))
+
 	By("starting Alertmanager container")
 	amPort = freePort()
 	out, err = runContainerCommand(containerTool, containerStartTimeout,
 		"run", "-d", "--rm",
 		"--name", amContainerName,
 		"-p", fmt.Sprintf("%s:9093", amPort),
+		"--pull=never",
 		alertmanagerImage,
 	)
 	Expect(err).NotTo(HaveOccurred(), "start Alertmanager: %s", string(out))
