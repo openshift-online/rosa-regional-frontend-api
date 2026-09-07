@@ -416,7 +416,7 @@ func runContainerCommand(tool string, timeout time.Duration, args ...string) ([]
 }
 
 func removeContainer(tool, name string) {
-	if err := exec.Command(tool, "rm", "-f", name).Run(); err != nil {
+	if _, err := runContainerCommand(tool, 30*time.Second, "rm", "-f", name); err != nil {
 		_, _ = fmt.Fprintf(GinkgoWriter, "failed to remove container %s: %v\n", name, err)
 	}
 }

@@ -34,6 +34,8 @@ import (
 const silenceAPIRetryDelay = time.Minute
 
 // SilenceReconciler manages Alertmanager silences for cluster lifecycle phases.
+// Delete cleanup relies on silence TTL rather than a CR finalizer; Ready-phase
+// silences are expired explicitly when IntentForCluster returns nil.
 type SilenceReconciler struct {
 	client.Client
 	SilenceClient           silence.Client

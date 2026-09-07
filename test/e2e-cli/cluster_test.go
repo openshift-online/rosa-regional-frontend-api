@@ -477,6 +477,10 @@ var _ = Describe("ROSACTL CLI E2E Tests", Ordered, func() {
 			}
 
 			if phase != v1alpha1.ClusterPhaseWaitingForPlacement && phase != v1alpha1.ClusterPhaseProvisioning {
+				g.Expect(phase).To(Or(
+					Equal(v1alpha1.ClusterPhaseWaitingForPlacement),
+					Equal(v1alpha1.ClusterPhaseProvisioning),
+				), "unexpected cluster phase while waiting for installing silence")
 				return
 			}
 
@@ -599,9 +603,12 @@ var _ = Describe("ROSACTL CLI E2E Tests", Ordered, func() {
 		}
 		Expect(name).ToNot(BeEmpty(), "clusterName required — run hcp-create first or set HCP_CLUSTER_NAME")
 
-		silences, err := amhelper.ListManagedSilences(context.Background(), amURL, id, name)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(silences).To(BeEmpty(), "lifecycle silences should be expired once the cluster is Ready")
+		Eventually(func(g Gomega) {
+			silences, err := amhelper.ListManagedSilences(context.Background(), amURL, id, name)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(silences).To(BeEmpty())
+		}).WithTimeout(2*time.Minute).WithPolling(5*time.Second).Should(Succeed(),
+			"lifecycle silences should be expired once the cluster is Ready")
 	})
 
 	It("should generate a working kubeconfig", Label("kubeconfig", "monitor"), func() {

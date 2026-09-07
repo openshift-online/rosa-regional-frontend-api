@@ -133,7 +133,9 @@ func TestAlertmanagerClientCreateError(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte("internal-hostname=secret.example.com"))
+		if _, err := w.Write([]byte("internal-hostname=secret.example.com")); err != nil {
+			t.Errorf("write error response: %v", err)
+		}
 	}))
 	defer server.Close()
 
