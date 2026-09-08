@@ -609,10 +609,19 @@ var _ = Describe("ROSACTL CLI E2E Tests", Ordered, func() {
 		Expect(name).ToNot(BeEmpty(), "clusterName required — run hcp-create first or set HCP_CLUSTER_NAME")
 
 		Eventually(func(g Gomega) {
+			resp, err := customerApiClient.Get("/api/v0/clusters/"+id, customerAccountID)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(resp.StatusCode).To(Equal(http.StatusOK))
+
+			var cluster v1alpha1.Cluster
+			g.Expect(json.Unmarshal(resp.Body, &cluster)).To(Succeed())
+			g.Expect(cluster.Status.Phase).To(Equal(v1alpha1.ClusterPhaseReady),
+				"cluster must be Ready before expecting silences to be expired")
+
 			silences, err := amhelper.ListManagedSilences(context.Background(), amURL, id, name)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(silences).To(BeEmpty())
-		}).WithTimeout(2*time.Minute).WithPolling(5*time.Second).Should(Succeed(),
+		}).WithTimeout(35*time.Minute).WithPolling(5*time.Second).Should(Succeed(),
 			"lifecycle silences should be expired once the cluster is Ready")
 	})
 
