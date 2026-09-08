@@ -1,6 +1,6 @@
 # ROSA Authorization Service
 
-This document describes the Cedar/AVP-based authorization service for the ROSA HyperFleet API.
+This document describes the Cedar-based authorization service for the ROSA HyperFleet API.
 
 ## Overview
 
@@ -8,11 +8,12 @@ The authorization service provides fine-grained access control for ROSA operatio
 
 - **AWS IAM** for authentication (all requests carry AWS IAM credentials)
 - **Principal linking** — IAM principals can be linked to Red Hat users for administrative and policy management access
-- **Amazon Verified Permissions (AVP)** for policy evaluation
-- **Cedar** as the policy language
-- **DynamoDB** for storing account and principal linkage
+- **Cedar** as the policy language, evaluated **in-process** within the API (via the `cedar-go` library) — no external authorization service on the request path
+- **DynamoDB** for storing account and principal linkage, ROSA policies, and attachments
 
-Identity is global: AWS IAM credentials identify the principal and AWS account, and each AWS account is linked to exactly one Red Hat organization. ROSA policies are global: they are defined once and apply across all regions. Attachments can be **global** (apply in all regions) or **regional** (apply in a single region). Policy evaluation is regional: each region maintains its own AVP policy store. Policies can use `context.region` to restrict which regions they take effect in.
+Identity is global: AWS IAM credentials identify the principal and AWS account, and each AWS account is linked to exactly one Red Hat organization. ROSA policies are global: they are defined once and apply across all regions. Attachments can be **global** (apply in all regions) or **regional** (apply in a single region).
+
+Policy evaluation is regional and in-process: each region's API instances evaluate Cedar policies locally against the regional attachments and the global policies and attachments replicated to that region via DynamoDB Global Tables. Policies can use `context.region` to restrict which regions they take effect in.
 
 ## Authorization Flows
 
@@ -42,7 +43,6 @@ sequenceDiagram
     actor User as IAM Principal
     participant API as ROSA HyperFleet API
     participant DB as DynamoDB
-    participant AVP as Amazon Verified Permissions
 
     User->>API: Policy management request (create, attach, etc.)
     API->>DB: Is the AWS account linked?
@@ -54,7 +54,8 @@ sequenceDiagram
         API->>DB: Perform policy/attachment operation
         API-->>User: Success
     end
-    API->>AVP: Evaluate Cedar policies for this principal
+    API->>DB: Load ROSA policies attached to this principal
+    API->>API: Evaluate Cedar policies in-process
     alt Policy allows (e.g. ManagePolicies action)
         API->>DB: Perform policy/attachment operation
         API-->>User: Success
@@ -72,14 +73,14 @@ sequenceDiagram
     actor User as IAM Principal
     participant API as ROSA HyperFleet API
     participant DB as DynamoDB
-    participant AVP as Amazon Verified Permissions
 
     User->>API: API request (e.g. create cluster)
     API->>DB: Is the AWS account linked?
     alt Account not linked
         API-->>User: 403 — Account not linked
     end
-    API->>AVP: Evaluate Cedar policies for this principal
+    API->>DB: Load ROSA policies attached to this principal
+    API->>API: Evaluate Cedar policies in-process
     alt Policy allows
         API-->>User: ALLOW
     else Policy denies
@@ -96,11 +97,11 @@ sequenceDiagram
 
 Admin access grants policy and attachment management permissions within the linked AWS account. For all other actions (e.g., cluster operations), admin principals require Cedar policies like any other principal. As admin users, they are enabled to create and attach Cedar policies to themselves or other principals.
 
-**Regular IAM principals** — all other callers. Access is determined by Cedar policies evaluated via AVP, attached directly to the principal's ARN.
+**Regular IAM principals** — all other callers. Access is determined by Cedar policies evaluated in-process, attached directly to the principal's ARN.
 
 > **Note:** Policy management is not restricted to administrative users. A regular IAM principal can be granted a Cedar policy that authorizes policy and attachment management (e.g., via a `ManagePolicies` action). This allows delegated policy administration without requiring principal linking or an RBAC role.
 
-Policy management operates at global scope — both for RH administrators and for IAM principals with delegated policy management permissions. Because ROSA policies are global, restricting an administrator to a single region would be inconsistent: a regionally-scoped admin who creates a policy would lose management authority over it if that policy is later updated to apply across multiple regions. For this reason, HyperFleet does not support regionally-scoped policy administrators.
+Policy management operates at global scope — both for RH administrators and for IAM principals with delegated policy management permissions. Because ROSA policies are global, restricting an administrator to a single region would be inconsistent: a regionally-scoped admin who creates a policy would lose management authority over it if that policy is later updated to apply across multiple regions. For this reason, HyperFleet does not support regionally-scoped _policy_ administrators. Attachment management, however, can be regional: a principal can be granted only the `*AttachmentRegional` actions, making them a regionally-scoped attachment administrator without any authority over global policies.
 
 ## Principal Linking
 
@@ -117,7 +118,7 @@ Each AWS account maps to exactly one Red Hat organization (many-to-one: one RH o
 | Scope                                      | What                                                                                                                                                           |
 | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Global**                                 | AWS IAM identity, AWS account → RH org mapping, IAM principal → RH user mapping, RH Org Admin status, RBAC role assignments, ROSA policies, global attachments |
-| **Regional (per AWS account, per region)** | Regional attachments, policy evaluation (AVP policy stores), ROSA resources (clusters, node pools, access entries)                                             |
+| **Regional (per AWS account, per region)** | Regional attachments, in-process policy evaluation, ROSA resources (clusters, node pools, access entries)                                                      |
 
 ROSA policies are defined globally — a ROSA policy created from any region is available everywhere. Attachments can be global (replicated to all regions) or regional (stored only in the target region). To restrict a policy to specific regions, use `context.region` conditions in Cedar (see [Policy Examples](#policy-examples)), or use regional attachments to limit where a ROSA policy is applied.
 
@@ -133,6 +134,8 @@ Cedar uses a **default-deny, permit-unless-forbid** model:
 
 When multiple policies are attached to a principal, all are evaluated together. A single `forbid` overrides any number of `permit` policies.
 
+Forbid precedence governs how attached policies are evaluated for a request. It is not a boundary on account administrators: any principal with policy-management rights (an admin, or a principal granted `PolicyAdmin`) can attach or detach policies, including forbids. `PolicyAdmin` is effectively account-root within its AWS account, by design.
+
 ## Default Access Policy
 
 By default, newly linked AWS accounts grant **no permissions** to any IAM principal. Permissions must be explicitly granted through Cedar policies.
@@ -141,27 +144,27 @@ Organization Administrators can attach managed ROSA policies to any IAM principa
 
 ## Data Storage
 
-| Entity                          | Storage                         | Scope                                  |
-| ------------------------------- | ------------------------------- | -------------------------------------- |
-| AWS account → RH org mapping    | DynamoDB Global Tables          | Global                                 |
-| IAM principal → RH user mapping | DynamoDB Global Tables          | Global                                 |
-| ROSA policy templates           | DynamoDB Global Tables          | Global                                 |
-| Global attachments              | DynamoDB Global Tables          | Global                                 |
-| Regional attachments            | DynamoDB (regional, non-global) | Regional                               |
-| Policy evaluation               | AVP IsAuthorized API            | Regional (per AWS account, per region) |
+| Entity                          | Storage                         | Scope                       |
+| ------------------------------- | ------------------------------- | --------------------------- |
+| AWS account → RH org mapping    | DynamoDB Global Tables          | Global                      |
+| IAM principal → RH user mapping | DynamoDB Global Tables          | Global                      |
+| ROSA policy templates           | DynamoDB Global Tables          | Global                      |
+| Global attachments              | DynamoDB Global Tables          | Global                      |
+| Regional attachments            | DynamoDB (regional, non-global) | Regional                    |
+| Policy evaluation               | In-process Cedar (`cedar-go`)   | Regional (per API instance) |
 
-DynamoDB Global Tables are the source of truth for ROSA policies and global attachments. Regional attachments are stored in a standard (non-global) DynamoDB table in each region. AVP is used only for evaluation — it is not the source of truth.
+DynamoDB Global Tables are the source of truth for ROSA policies and global attachments. Regional attachments are stored in a standard (non-global) DynamoDB table in each region. Each API instance loads the relevant policies and attachments from DynamoDB and evaluates them in-process with `cedar-go` — DynamoDB remains the single source of truth.
 
 ## API Endpoints
 
-### Account Management (Org Admin Only)
+### Account Management (Org Admin or ROSAAdmin only)
 
-| Method | Path                    | Description                                |
-| ------ | ----------------------- | ------------------------------------------ |
-| POST   | `/api/v0/accounts`      | Link an AWS account (creates policy store) |
-| GET    | `/api/v0/accounts`      | List linked accounts                       |
-| GET    | `/api/v0/accounts/{id}` | Get AWS account details                    |
-| DELETE | `/api/v0/accounts/{id}` | Unlink AWS account (deletes policy store)  |
+| Method | Path                    | Description             |
+| ------ | ----------------------- | ----------------------- |
+| POST   | `/api/v0/accounts`      | Link an AWS account     |
+| GET    | `/api/v0/accounts`      | List linked accounts    |
+| GET    | `/api/v0/accounts/{id}` | Get AWS account details |
+| DELETE | `/api/v0/accounts/{id}` | Unlink AWS account      |
 
 ### Policy Management (Org Admin or Authorized Principal)
 
@@ -223,6 +226,8 @@ Policies can be attached at different levels of the IAM principal hierarchy:
 
 During policy evaluation, the system checks for policies attached to both the caller's exact ARN and, for assumed-role sessions, the parent role ARN. This allows broad role-level policies and narrow session-level overrides to coexist.
 
+**Note**: Because the role path is not recoverable from a session ARN, path-namespaced roles (e.g. `.../role/engineering/DeveloperRole`) are matched by name only. Do not rely on the path for isolation.
+
 ## ROSA Actions Reference
 
 > **Note:** The actions listed below are illustrative examples, not an exhaustive catalog. The definitive set of actions is defined in the Cedar schema and will evolve as the API surface grows.
@@ -239,13 +244,13 @@ All actions use the `ROSA::Action` entity type in Cedar policies.
   - `CreateAccessEntry`, `DeleteAccessEntry`, `DescribeAccessEntry`
   - `ListAccessEntries`, `UpdateAccessEntry`, `ListAccessPolicies`
 - **Label**
-  - `LabelResource`, `DeleteLabelFromResource`, `ListLabelsForResource`
+  - `LabelResource`, `UnlabelResource`, `ListLabelsForResource`
 - **Policy Management**
   - `CreatePolicy`, `DeletePolicy`, `DescribePolicy`, `ListPolicies`, `UpdatePolicy`
   - `CreateAttachment`, `DeleteAttachment`, `ListAttachments`
   - `CreateAttachmentRegional`, `DeleteAttachmentRegional`, `ListAttachmentsRegional`
 
-> **Note:** `*AttachmentRegional` only permits the creation of attachments that are scoped to a region, not global. This allows us to have regional permissions admins.
+> **Note:** `*AttachmentRegional` only permits the creation of attachments that are scoped to a region, not global.
 
 ### Action Matching
 
@@ -291,7 +296,7 @@ The ROSA schema defines the following action groups (all members of `AllActions`
 - **`NodePoolAdmin`** — create, delete, update, and scale node pools
 - **`AccessEntryAdmin`** — create, delete, and update access entries
 - **`LabelAdmin`** — label and unlabel resources
-- **`PolicyAdmin`** — create, delete, and update policies and attachments
+- **`PolicyAdmin`** — create, delete, and update policies and attachments (global and regional)
 
 ### Policy Examples
 
@@ -355,7 +360,7 @@ permit(
 when { resource.labels["Team"] == "platform-engineering" };
 ```
 
-**Time-based access** — restricts operations to business hours on weekdays using `context.requestTime`. `requestTime` fields (`hour`, `dayOfWeek`) are expressed in UTC.
+**Time-based access** — restricts operations to business hours on weekdays using `context.requestTime`.
 
 ```cedar
 permit(
@@ -429,17 +434,17 @@ This means a single policy scoped to a cluster covers all current and future chi
 
 ## Context Attributes
 
-Context attributes are passed alongside each AVP authorization request and can be referenced in Cedar policies via `context.<attribute>`. The available attributes are derived from the SigV4 request as it flows through API Gateway (IAM auth mode):
+Context attributes are supplied to the in-process Cedar evaluation for each authorization request and can be referenced in Cedar policies via `context.<attribute>`. The available attributes are derived from the SigV4 request as it flows through API Gateway (IAM auth mode):
 
-| Attribute       | Type                  | Description                                                                                                                                                                                    |
-| --------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `region`        | String                | AWS region where the request is being evaluated (e.g., `us-east-1`)                                                                                                                            |
-| `principalArn`  | String                | Full ARN of the calling IAM principal                                                                                                                                                          |
-| `accountId`     | String                | AWS account ID of the caller                                                                                                                                                                   |
-| `sourceIp`      | String                | Source IP address of the request                                                                                                                                                               |
-| `userAgent`     | String                | User-Agent header from the request                                                                                                                                                             |
-| `requestTime`   | Record                | Request timestamp with `hour`, `dayOfWeek`, and `timezone` fields for time-based policies. The `timezone` field (IANA tz name, e.g., `America/New_York`) is mandatory in time-based conditions |
-| `requestLabels` | Map\<String, String\> | Labels provided in the request body (e.g., when creating a cluster)                                                                                                                            |
+| Attribute       | Type                  | Description                                                         |
+| --------------- | --------------------- | ------------------------------------------------------------------- |
+| `region`        | String                | AWS region where the request is being evaluated (e.g., `us-east-1`) |
+| `principalArn`  | String                | Full ARN of the calling IAM principal                               |
+| `accountId`     | String                | AWS account ID of the caller                                        |
+| `sourceIp`      | String                | Source IP address of the request                                    |
+| `userAgent`     | String                | User-Agent header from the request                                  |
+| `requestTime`   | Record                | Request timestamp fields for time-based policies.                   |
+| `requestLabels` | Map\<String, String\> | Labels provided in the request body (e.g., when creating a cluster) |
 
 > **Note:** IAM-internal condition keys such as `aws:MultiFactorAuthPresent` and session tags (`aws:PrincipalTag/*`) are not available — API Gateway does not forward them to the backend.
 
@@ -530,4 +535,4 @@ rosactl cluster create my-cluster
 ## Further Reading
 
 - [Cedar Language Reference](https://docs.cedarpolicy.com/)
-- [Amazon Verified Permissions Documentation](https://docs.aws.amazon.com/verifiedpermissions/)
+- [`cedar-go` — Cedar policy engine for Go](https://github.com/cedar-policy/cedar-go)
