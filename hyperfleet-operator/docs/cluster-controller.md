@@ -51,28 +51,34 @@ sequenceDiagram
 
 The controller generates 7 Kubernetes manifests, all scoped to namespace `clusters-{clusterID}`:
 
-| #   | Resource       | Name                   | Purpose                                                       |
-| --- | -------------- | ---------------------- | ------------------------------------------------------------- |
-| 1   | Namespace      | `clusters-{clusterID}` | Isolation boundary for all cluster resources                  |
-| 2   | ConfigMap      | `cluster-config`       | Cluster ID and display name                                   |
-| 3   | ConfigMap      | `aws-iam-auth-config`  | AWS IAM authenticator mapping (creator ARN → system:masters)  |
-| 4   | ExternalSecret | `pull-secret`          | Pulls container registry credentials from AWS Parameter Store |
-| 5   | Certificate    | `api-serving-cert`     | TLS cert for `*.{name}.{hash4}.{baseDomain}` via cert-manager |
-| 6   | HostedCluster  | `{clusterName}`        | HyperShift control plane definition                           |
-| 7   | Secret         | `ssh-key`              | SSH key placeholder                                           |
+| #   | Resource       | Name                   | Purpose                                                                |
+| --- | -------------- | ---------------------- | ---------------------------------------------------------------------- |
+| 1   | Namespace      | `clusters-{clusterID}` | Isolation boundary for all cluster resources                           |
+| 2   | ConfigMap      | `cluster-config`       | Cluster ID and display name                                            |
+| 3   | ConfigMap      | `aws-iam-auth-config`  | AWS IAM authenticator mapping (creator ARN → system:masters)           |
+| 4   | ExternalSecret | `pull-secret`          | Pulls container registry credentials from AWS Parameter Store          |
+| 5   | Certificate    | `api-serving-cert`     | TLS cert for `*.{name}.{prefix}.{shard}.{baseDomain}` via cert-manager |
+| 6   | HostedCluster  | `{clusterName}`        | HyperShift control plane definition                                    |
+| 7   | Secret         | `ssh-key`              | SSH key placeholder                                                    |
 
-### DNS and hash4
+### DNS reservation
 
-The `hash4` value is the first 4 characters of the cluster ID (a UUID). It provides short, unique subdomains that disambiguate clusters sharing the same human-readable name:
+Before rendering, the controller reserves a base domain and stores it in
+`Cluster.Status.BaseDomain`. It is assembled as `{prefix}.{shard}.{baseDomain}`
+(e.g. `f7a3.0.rosa.example.com`), where `prefix` is a random hex value, `shard`
+is the DNS zone shard (default `0`), and `baseDomain` is the operator's
+`--base-domain`. Rendered hostnames layer the cluster name on top, e.g.
+`api.{clusterName}.{prefix}.{shard}.{baseDomain}`.
 
-- API server: `api.{clusterName}.{hash4}.{baseDomain}`
-- OAuth: `oauth.{clusterName}.{hash4}.{baseDomain}`
-- TLS SAN: `*.{clusterName}.{hash4}.{baseDomain}`
-- HostedCluster baseDomain: `{hash4}.{baseDomain}`
-
-For example, cluster ID `abc12345` with name `my-cluster` and baseDomain `rosa.example.com` produces `api.my-cluster.abc1.rosa.example.com`.
-
-**Uniqueness guarantee**: A PostgreSQL unique partial index (`idx_cluster_name_hash4`) enforces that no two live clusters with the same name share the same hash4 prefix. If a collision occurs during creation, the platform-api retries with a new UUID (up to 5 attempts). With 16^4 = 65,536 possible hex values per name, exhaustion is practically impossible.
+Uniqueness is per shard, not per cluster name: only the `prefix` must be unique
+within its shard, so two clusters can share a name. It is still DB-enforced —
+`reserveDNS` creates an `Index` CR named `{prefix}` in the shard namespace, and
+hyperfleet-db's `(gvk, namespace, name)` unique constraint rejects a duplicate
+as an `AlreadyExists` conflict (replacing the old `idx_cluster_name_hash4`). On
+conflict the controller retries with a fresh prefix; adding shards scales out
+capacity. A `DNSReservation` records the owning cluster, and both objects are
+cleaned up on cluster deletion. See `reserveDNS`/`tryReserveDNS` for the
+create-or-adopt details.
 
 ## Deletion Flow
 

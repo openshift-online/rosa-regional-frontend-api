@@ -62,15 +62,8 @@ func testClusterWithOidcConfig() *hyperfleetv1alpha1.Cluster {
 	return c
 }
 
-func testRegionalConfig() RegionalConfig {
-	return RegionalConfig{
-		BaseDomain: "example.com",
-		AWSRegion:  "us-east-1",
-	}
-}
-
 func TestClusterResourcesCount(t *testing.T) {
-	resources, err := ClusterResources(testCluster(), false, testRegionalConfig())
+	resources, err := ClusterResources(testCluster(), false, "f7a3.0.example.com")
 	if err != nil {
 		t.Fatalf("ClusterResources: %v", err)
 	}
@@ -80,7 +73,7 @@ func TestClusterResourcesCount(t *testing.T) {
 }
 
 func TestClusterResourcesTypes(t *testing.T) {
-	resources, err := ClusterResources(testCluster(), false, testRegionalConfig())
+	resources, err := ClusterResources(testCluster(), false, "f7a3.0.example.com")
 	if err != nil {
 		t.Fatalf("ClusterResources: %v", err)
 	}
@@ -112,7 +105,7 @@ func TestClusterResourcesTypes(t *testing.T) {
 // ExternalSecret and ServiceAccountSigningKey reference are rendered when the
 // referenced OidcConfig is type=unmanaged (oidcSigningKeyExternal=true).
 func TestClusterResourcesWithOidcConfig(t *testing.T) {
-	resources, err := ClusterResources(testClusterWithOidcConfig(), true, testRegionalConfig())
+	resources, err := ClusterResources(testClusterWithOidcConfig(), true, "f7a3.0.example.com")
 	if err != nil {
 		t.Fatalf("ClusterResources: %v", err)
 	}
@@ -151,7 +144,7 @@ func TestClusterResourcesWithOidcConfig(t *testing.T) {
 // TestClusterResourcesWithoutOidcConfig_NoExternalSecret verifies the legacy
 // path renders no OIDC signing key ExternalSecret.
 func TestClusterResourcesWithoutOidcConfig_NoExternalSecret(t *testing.T) {
-	resources, err := ClusterResources(testCluster(), false, testRegionalConfig())
+	resources, err := ClusterResources(testCluster(), false, "f7a3.0.example.com")
 	if err != nil {
 		t.Fatalf("ClusterResources: %v", err)
 	}
@@ -181,7 +174,7 @@ func TestClusterResourcesWithoutOidcConfig_NoExternalSecret(t *testing.T) {
 // no ExternalSecret/ServiceAccountSigningKey, since managed configs don't
 // store a signing key in Secrets Manager for ESO to deliver.
 func TestClusterResourcesWithManagedOidcConfig_NoExternalSecret(t *testing.T) {
-	resources, err := ClusterResources(testClusterWithOidcConfig(), false, testRegionalConfig())
+	resources, err := ClusterResources(testClusterWithOidcConfig(), false, "f7a3.0.example.com")
 	if err != nil {
 		t.Fatalf("ClusterResources: %v", err)
 	}
@@ -214,7 +207,7 @@ func TestClusterResourcesClearsStaleServiceAccountSigningKey(t *testing.T) {
 	cluster := testCluster()
 	cluster.Spec.HostedCluster.ServiceAccountSigningKey = &corev1.LocalObjectReference{Name: "stale-key"}
 
-	resources, err := ClusterResources(cluster, false, testRegionalConfig())
+	resources, err := ClusterResources(cluster, false, "f7a3.0.example.com")
 	if err != nil {
 		t.Fatalf("ClusterResources: %v", err)
 	}
@@ -231,22 +224,6 @@ func TestClusterResourcesClearsStaleServiceAccountSigningKey(t *testing.T) {
 	}
 	if hc.Spec.ServiceAccountSigningKey != nil {
 		t.Errorf("expected stale ServiceAccountSigningKey to be cleared, got %+v", hc.Spec.ServiceAccountSigningKey)
-	}
-}
-
-func TestHash4(t *testing.T) {
-	tests := []struct {
-		in, want string
-	}{
-		{"abc12345", "abc1"},
-		{"ab", "ab"},
-		{"abcd", "abcd"},
-		{"", ""},
-	}
-	for _, tt := range tests {
-		if got := hash4(tt.in); got != tt.want {
-			t.Errorf("hash4(%q) = %q, want %q", tt.in, got, tt.want)
-		}
 	}
 }
 
@@ -298,7 +275,7 @@ func TestExtractUUIDFromIssuerURL(t *testing.T) {
 }
 
 func TestHostedClusterDNS(t *testing.T) {
-	resources, err := ClusterResources(testCluster(), false, testRegionalConfig())
+	resources, err := ClusterResources(testCluster(), false, "f7a3.0.example.com")
 	if err != nil {
 		t.Fatalf("ClusterResources: %v", err)
 	}
@@ -314,12 +291,12 @@ func TestHostedClusterDNS(t *testing.T) {
 		t.Fatal("no hostedcluster resource found")
 	}
 
-	if got := hc.Spec.DNS.BaseDomain; got != "abc1.0.example.com" {
-		t.Errorf("dns.baseDomain = %q, want %q", got, "abc1.0.example.com")
+	if got := hc.Spec.DNS.BaseDomain; got != "f7a3.0.example.com" {
+		t.Errorf("dns.baseDomain = %q, want %q", got, "f7a3.0.example.com")
 	}
 
-	if got := hc.Spec.KubeAPIServerDNSName; got != "api.my-cluster.abc1.0.example.com" {
-		t.Errorf("kubeAPIServerDNSName = %q, want %q", got, "api.my-cluster.abc1.0.example.com")
+	if want := "api.my-cluster.f7a3.0.example.com"; hc.Spec.KubeAPIServerDNSName != want {
+		t.Errorf("kubeAPIServerDNSName = %q, want %q", hc.Spec.KubeAPIServerDNSName, want)
 	}
 
 	if got := hc.Spec.IssuerURL; got != "https://oidc.example.com/abc12345" {
@@ -334,7 +311,7 @@ func TestHostedClusterDNS(t *testing.T) {
 }
 
 func TestCreatorARNInAuthConfig(t *testing.T) {
-	resources, err := ClusterResources(testCluster(), false, testRegionalConfig())
+	resources, err := ClusterResources(testCluster(), false, "f7a3.0.example.com")
 	if err != nil {
 		t.Fatalf("ClusterResources: %v", err)
 	}

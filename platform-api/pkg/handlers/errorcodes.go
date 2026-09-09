@@ -29,7 +29,6 @@ var (
 	ErrClusterCreateOidcConfigLookupFailed APIError
 	ErrClusterCreateNameConflict           APIError
 	ErrClusterCreateNameTooLong            APIError
-	ErrClusterCreateIDExhausted            APIError
 	ErrClusterCreateInvalidSpec            APIError
 
 	ErrClusterCreateOidcConfigRequired APIError
@@ -229,7 +228,6 @@ func init() {
 	ErrClusterCreateOidcConfigLookupFailed = APIError{Code: "CLUSTERS-MGMT-CREATE-013", HTTPStatus: http.StatusInternalServerError, Message: "Failed to look up referenced OIDC config"}
 	ErrClusterCreateNameConflict = APIError{Code: "CLUSTERS-MGMT-CREATE-005", HTTPStatus: http.StatusConflict, Message: "Cluster name already exists in this account", Reason: "a cluster named %q already exists in this account"}
 	ErrClusterCreateNameTooLong = APIError{Code: "CLUSTERS-MGMT-CREATE-006", HTTPStatus: http.StatusBadRequest, Message: fmt.Sprintf("Cluster name must be no more than %d characters", hyperfleetdb.MaxClusterNameLen)}
-	ErrClusterCreateIDExhausted = APIError{Code: "CLUSTERS-MGMT-CREATE-007", HTTPStatus: http.StatusInternalServerError, Message: "Unable to generate unique DNS identifier"}
 	ErrClusterCreateInvalidSpec = APIError{Code: "CLUSTERS-MGMT-CREATE-008", HTTPStatus: http.StatusBadRequest, Message: "Invalid cluster spec"}
 	ErrClusterCreateOidcConfigRequired = APIError{Code: "CLUSTERS-MGMT-CREATE-009", HTTPStatus: http.StatusBadRequest, Message: "spec.oidcConfigId is required"}
 	ErrClusterCreateOidcConfigNotFound = APIError{Code: "CLUSTERS-MGMT-CREATE-010", HTTPStatus: http.StatusNotFound, Message: "Referenced OIDC config not found"}
