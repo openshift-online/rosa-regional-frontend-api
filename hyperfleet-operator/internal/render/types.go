@@ -6,8 +6,11 @@ import (
 
 // RegionalConfig holds per-region values injected by the operator at startup.
 type RegionalConfig struct {
-	BaseDomain string
-	AWSRegion  string
+	// BaseDomainSuffix is the shared parent zone every cluster's assigned base
+	// domain hangs off, e.g. "rosa.example.com". A cluster's own base domain is
+	// assembled as "{prefix}.{shard}.{BaseDomainSuffix}".
+	BaseDomainSuffix string
+	AWSRegion        string
 }
 
 // Resource is a generated Kubernetes resource with its GVR for desire creation.
@@ -18,13 +21,6 @@ type Resource struct {
 	Name      string
 	Namespace string
 	Object    any
-}
-
-func hash4(clusterID string) string {
-	if len(clusterID) < 4 {
-		return clusterID
-	}
-	return clusterID[:4]
 }
 
 // ClusterIDFromNamespace extracts the cluster UUID from a namespace name

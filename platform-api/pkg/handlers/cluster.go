@@ -176,68 +176,52 @@ func (h *ClusterHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	clusterID := h.generateID()
 
-	const maxHash4Retries = 5
-	for attempt := 0; attempt < maxHash4Retries; attempt++ {
-		h.logger.Info("creating cluster", "account_id", accountID, "cluster_name", req.Name, "cluster_id", clusterID)
+	h.logger.Info("creating cluster", "account_id", accountID, "cluster_name", req.Name, "cluster_id", clusterID)
 
-		if h.defaultClusterExpiration > 0 && req.Spec.ExpirationTimestamp == nil {
-			expiry := metav1.NewTime(time.Now().Add(h.defaultClusterExpiration))
-			req.Spec.ExpirationTimestamp = &expiry
-		}
+	if h.defaultClusterExpiration > 0 && req.Spec.ExpirationTimestamp == nil {
+		expiry := metav1.NewTime(time.Now().Add(h.defaultClusterExpiration))
+		req.Spec.ExpirationTimestamp = &expiry
+	}
 
-		cr := hyperfleetdb.PublicToInternalCluster(&req, accountID, clusterID)
+	cr := hyperfleetdb.PublicToInternalCluster(&req, accountID, clusterID)
 
-		// Set service-set fields on the internal CRD (not visible in public request/response)
-		if callerARN := middleware.GetCallerARN(ctx); callerARN != "" {
-			cr.Spec.CreatorARN = callerARN
-		}
-		// issuerURL is service-set; derive it here rather than accept it from the caller.
-		if oidcConfig != nil {
-			cr.Spec.HostedCluster.IssuerURL = oidcConfig.Spec.IssuerUrl
-		} else if h.oidcIssuerBaseURL != "" {
-			cr.Spec.HostedCluster.IssuerURL = h.oidcIssuerBaseURL + "/" + clusterID
-		}
+	// Set service-set fields on the internal CRD (not visible in public request/response)
+	if callerARN := middleware.GetCallerARN(ctx); callerARN != "" {
+		cr.Spec.CreatorARN = callerARN
+	}
+	// issuerURL is service-set; derive it here rather than accept it from the caller.
+	if oidcConfig != nil {
+		cr.Spec.HostedCluster.IssuerURL = oidcConfig.Spec.IssuerUrl
+	} else if h.oidcIssuerBaseURL != "" {
+		cr.Spec.HostedCluster.IssuerURL = h.oidcIssuerBaseURL + "/" + clusterID
+	}
 
-		if err := h.db.CreateCluster(ctx, accountID, cr); err != nil {
-			if hyperfleetdb.IsAlreadyExists(err) {
-				// AlreadyExists here means either (a) the generated clusterID
-				// collided (hash4 collision), or (b) a concurrent request already
-				// claimed this oidcConfigId (idx_cluster_oidcconfig_id). Retrying
-				// with a new clusterID only fixes (a) — for (b) it would just
-				// collide again, eventually masking a real conflict as a 500.
-				// Re-check now so we can return the correct 409 instead.
-				if req.Spec.OidcConfigID != "" {
-					if inUse, checkErr := h.isOidcConfigInUse(ctx, accountID, req.Spec.OidcConfigID); checkErr != nil {
-						h.logger.Error("failed to re-check oidc config usage after create conflict", "error", checkErr, "account_id", accountID, "oidc_config_id", req.Spec.OidcConfigID)
-					} else if inUse {
-						apiErr := ErrClusterCreateOidcConfigInUse.WithReason(req.Spec.OidcConfigID)
-						writeAPIError(w, apiErr, h.logger)
-						return
-					}
-				}
-				if attempt < maxHash4Retries-1 {
-					clusterID = h.generateID()
-					continue
-				}
-				h.logger.Error("failed to create cluster", "error", err, "account_id", accountID)
-				writeAPIError(w, ErrClusterCreateIDExhausted, h.logger)
+	if err := h.db.CreateCluster(ctx, accountID, cr); err != nil {
+		if hyperfleetdb.IsAlreadyExists(err) && req.Spec.OidcConfigID != "" {
+			// AlreadyExists can mean a concurrent request already claimed this
+			// oidcConfigId (idx_cluster_oidcconfig_id). Re-check so we can return
+			// the correct 409 instead of a generic 500.
+			if inUse, checkErr := h.isOidcConfigInUse(ctx, accountID, req.Spec.OidcConfigID); checkErr != nil {
+				h.logger.Error("failed to re-check oidc config usage after create conflict", "error", checkErr, "account_id", accountID, "oidc_config_id", req.Spec.OidcConfigID)
+			} else if inUse {
+				apiErr := ErrClusterCreateOidcConfigInUse.WithReason(req.Spec.OidcConfigID)
+				writeAPIError(w, apiErr, h.logger)
 				return
 			}
-			h.logger.Error("failed to create cluster", "error", err, "account_id", accountID)
-			writeAPIError(w, ErrClusterCreateFailed, h.logger)
-			return
 		}
-
-		if oidcConfig != nil {
-			if err := h.db.UpdateOidcConfigLastUsedTimestamp(ctx, accountID, req.Spec.OidcConfigID, metav1.Now()); err != nil {
-				h.logger.Warn("failed to update oidc config lastUsedTimestamp", "error", err, "account_id", accountID, "oidc_config_id", req.Spec.OidcConfigID)
-			}
-		}
-
-		if err := api.Write(w, http.StatusCreated, hyperfleetdb.InternalToPublicCluster(cr)); err != nil {
-			h.logger.Error("failed to write response", "error", err)
-		}
+		h.logger.Error("failed to create cluster", "error", err, "account_id", accountID)
+		writeAPIError(w, ErrClusterCreateFailed, h.logger)
 		return
+	}
+
+	if oidcConfig != nil {
+		if err := h.db.UpdateOidcConfigLastUsedTimestamp(ctx, accountID, req.Spec.OidcConfigID, metav1.Now()); err != nil {
+			h.logger.Warn("failed to update oidc config lastUsedTimestamp", "error", err, "account_id", accountID, "oidc_config_id", req.Spec.OidcConfigID)
+		}
+	}
+
+	if err := api.Write(w, http.StatusCreated, hyperfleetdb.InternalToPublicCluster(cr)); err != nil {
+		h.logger.Error("failed to write response", "error", err)
 	}
 }
 

@@ -142,8 +142,8 @@ func main() {
 	dynamoClient := dynamo.NewClient(dynamoDBClient)
 
 	rcfg := render.RegionalConfig{
-		BaseDomain: baseDomain,
-		AWSRegion:  awsRegion,
+		BaseDomainSuffix: baseDomain,
+		AWSRegion:        awsRegion,
 	}
 
 	eventRouter := controller.NewEventRouter()
@@ -218,7 +218,8 @@ func main() {
 		mgr.GetClient(),
 		[]string{dynamo.TableSuffixStatusApplyDesires, dynamo.TableSuffixStatusReadDesires},
 		func(documentID string, _ hd.Item) { eventRouter.Dispatch(documentID) },
-		ctrl.Log.WithName("statusstream"), hd.Options{
+		ctrl.Log.WithName("statusstream"),
+		hd.Options{
 			PollInterval:      watcherPollInterval,
 			RelistInterval:    watcherRelistInterval,
 			MaxLookbackWindow: watcherMaxLookback,

@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -50,7 +52,11 @@ const (
 	statusRefreshDelay = 5 * time.Minute
 	taskKey            = "hyperfleet-operator"
 
-	accountIDLabel  = "hyperfleet.io/account-id"
+	// accountIDLabel records the AWS account that owns a resource.
+	accountIDLabel = "hyperfleet.io/account-id"
+	// clusterNamespaceLabel records the namespace of the Cluster that owns a resource.
+	clusterNamespaceLabel = "hyperfleet.io/cluster-namespace"
+	// accountNSPrefix prefixes the per-account namespace name.
 	accountNSPrefix = "account-"
 )
 
@@ -72,6 +78,8 @@ type ClusterReconciler struct {
 // +kubebuilder:rbac:groups=hyperfleet.io,resources=nodepools,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups=hyperfleet.io,resources=placements,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups=hyperfleet.io,resources=oidcconfigs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=hyperfleet.io,resources=dnsreservations,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups=hyperfleet.io,resources=indices,verbs=get;list;watch;create;delete
 
 // oidcSigningKeyExternal reports whether cluster's referenced OidcConfig is unmanaged
 func (r *ClusterReconciler) oidcSigningKeyExternal(ctx context.Context, cluster *hyperfleetv1alpha1.Cluster) (bool, error) {
@@ -83,7 +91,7 @@ func (r *ClusterReconciler) oidcSigningKeyExternal(ctx context.Context, cluster 
 		return false, nil
 	}
 	var oc hyperfleetv1alpha1.OidcConfig
-	key := types.NamespacedName{Namespace: accountNSPrefix + accountID, Name: cluster.Spec.OidcConfigID}
+	key := types.NamespacedName{Namespace: accountNamespace(accountID), Name: cluster.Spec.OidcConfigID}
 	if err := r.Get(ctx, key, &oc); err != nil {
 		if apierrors.IsNotFound(err) {
 			return false, nil
@@ -119,17 +127,8 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, nil
 	}
 
-	// Delete the cluster if it has expired.
-	if cluster.Spec.ExpirationTimestamp != nil && !cluster.Spec.ExpirationTimestamp.IsZero() &&
-		time.Now().After(cluster.Spec.ExpirationTimestamp.Time) {
-		log.Info("Cluster expired, triggering deletion", "expirationTimestamp", cluster.Spec.ExpirationTimestamp.Time)
-		if err := r.Delete(ctx, &cluster); err != nil {
-			if apierrors.IsNotFound(err) {
-				return ctrl.Result{}, nil
-			}
-			return ctrl.Result{}, fmt.Errorf("delete expired cluster: %w", err)
-		}
-		return ctrl.Result{}, nil
+	if expired, err := r.deleteIfExpired(ctx, &cluster); expired {
+		return ctrl.Result{}, err
 	}
 
 	// Look up Placement — if none or not Bound, wait.
@@ -148,6 +147,16 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
+	// Reserve a DNS base domain before rendering resources.
+	baseDomain := cluster.Status.BaseDomain
+	if baseDomain == "" {
+		var err error
+		baseDomain, err = r.reserveDNS(ctx, &cluster)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	mc := placement.Spec.ManagementCluster
 	specsPrefix := dynamo.SpecsPrefix(mc)
 	statusPrefix := dynamo.StatusPrefix(mc)
@@ -157,7 +166,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("resolve oidc signing key mode: %w", err)
 	}
-	resources, err := render.ClusterResources(&cluster, oidcSigningKeyExternal, r.RegionalConfig)
+	resources, err := render.ClusterResources(&cluster, oidcSigningKeyExternal, baseDomain)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("render cluster resources: %w", err)
 	}
@@ -317,6 +326,8 @@ func (r *ClusterReconciler) reconcileDelete(ctx context.Context, cluster *hyperf
 	hcName := cluster.Name
 	clusterID := render.ClusterIDFromNamespace(cluster.Namespace)
 
+	baseDomain := cluster.Status.BaseDomain
+
 	// Render the cluster resources — must match the original resource set so
 	// every ApplyDesire (including the OIDC signing key ExternalSecret, if
 	// any) gets flipped to Delete below instead of left dangling.
@@ -324,7 +335,7 @@ func (r *ClusterReconciler) reconcileDelete(ctx context.Context, cluster *hyperf
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("resolve oidc signing key mode: %w", err)
 	}
-	resources, err := render.ClusterResources(cluster, oidcSigningKeyExternal, r.RegionalConfig)
+	resources, err := render.ClusterResources(cluster, oidcSigningKeyExternal, baseDomain)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("render cluster resources: %w", err)
 	}
@@ -412,6 +423,32 @@ func (r *ClusterReconciler) reconcileDelete(ctx context.Context, cluster *hyperf
 
 func (r *ClusterReconciler) cleanupAndRemoveFinalizer(ctx context.Context, cluster *hyperfleetv1alpha1.Cluster) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
+
+	// Clean up the cluster's DNS reservation and its backing Index. Both are
+	// labeled with the cluster namespace, so deleting each set by label covers
+	// the fully-reserved case and a half-created one (Index created but the
+	// DNSReservation never was).
+	clusterOwned := client.MatchingLabels{clusterNamespaceLabel: cluster.Namespace}
+
+	var dnsList hyperfleetv1alpha1.DNSReservationList
+	if err := r.List(ctx, &dnsList, clusterOwned); err != nil {
+		return ctrl.Result{}, fmt.Errorf("list dns reservations for cleanup: %w", err)
+	}
+	for i := range dnsList.Items {
+		if err := r.Delete(ctx, &dnsList.Items[i]); err != nil && !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, fmt.Errorf("delete dns reservation: %w", err)
+		}
+	}
+
+	var idxList hyperfleetv1alpha1.IndexList
+	if err := r.List(ctx, &idxList, clusterOwned); err != nil {
+		return ctrl.Result{}, fmt.Errorf("list indexes for cleanup: %w", err)
+	}
+	for i := range idxList.Items {
+		if err := r.Delete(ctx, &idxList.Items[i]); err != nil && !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, fmt.Errorf("delete index: %w", err)
+		}
+	}
 
 	placementName := fmt.Sprintf("%s-placement", cluster.Name)
 	var placement hyperfleetv1alpha1.Placement
@@ -536,6 +573,21 @@ func (r *ClusterReconciler) setSyncedCondition(ctx context.Context, cluster *hyp
 	}
 }
 
+func (r *ClusterReconciler) deleteIfExpired(ctx context.Context, cluster *hyperfleetv1alpha1.Cluster) (bool, error) {
+	if cluster.Spec.ExpirationTimestamp == nil || cluster.Spec.ExpirationTimestamp.IsZero() ||
+		!time.Now().After(cluster.Spec.ExpirationTimestamp.Time) {
+		return false, nil
+	}
+	logf.FromContext(ctx).Info("Cluster expired, triggering deletion", "expirationTimestamp", cluster.Spec.ExpirationTimestamp.Time)
+	if err := r.Delete(ctx, cluster); err != nil {
+		if apierrors.IsNotFound(err) {
+			return true, nil
+		}
+		return true, fmt.Errorf("delete expired cluster: %w", err)
+	}
+	return true, nil
+}
+
 func (r *ClusterReconciler) setPhase(ctx context.Context, cluster *hyperfleetv1alpha1.Cluster, phase hyperfleetv1alpha1.ClusterPhase) {
 	if cluster.Status.Phase == phase {
 		return
@@ -557,6 +609,155 @@ func (r *ClusterReconciler) setPhase(ctx context.Context, cluster *hyperfleetv1a
 	}); err != nil {
 		logf.FromContext(ctx).Error(err, "Failed to update cluster phase", "phase", phase)
 	}
+}
+
+// defaultDNSShard is the single DNS zone shard used today. When multi-shard
+// routing is needed, this will be replaced by dynamic shard selection.
+const defaultDNSShard = "0"
+
+func accountNamespace(accountID string) string {
+	return accountNSPrefix + accountID
+}
+
+func dnsShardNamespace(shard string) string {
+	return "dns-shard-" + shard + "-reservations"
+}
+
+// reserveDNS creates an Index + DNSReservation pair and returns the assembled base domain.
+func (r *ClusterReconciler) reserveDNS(ctx context.Context, cluster *hyperfleetv1alpha1.Cluster) (string, error) {
+	accountNS := accountNamespace(cluster.Spec.AccountID)
+
+	// Check for an existing reservation from a previous attempt where
+	// the status update may have failed.
+	var existing hyperfleetv1alpha1.DNSReservationList
+	if err := r.List(ctx, &existing,
+		client.InNamespace(accountNS),
+		client.MatchingLabels{clusterNamespaceLabel: cluster.Namespace},
+	); err != nil {
+		return "", fmt.Errorf("list dns reservations: %w", err)
+	}
+	if len(existing.Items) > 0 {
+		bd := existing.Items[0].Spec.BaseDomain
+		return bd, r.persistBaseDomain(ctx, cluster, bd)
+	}
+
+	shard := defaultDNSShard
+	for range 5 {
+		prefix, err := randomHex4()
+		if err != nil {
+			return "", fmt.Errorf("generate dns prefix: %w", err)
+		}
+
+		baseDomain, reserved, err := r.tryReserveDNS(ctx, cluster, shard, prefix)
+		if err != nil {
+			return "", err
+		}
+		if !reserved {
+			continue
+		}
+
+		if err := r.persistBaseDomain(ctx, cluster, baseDomain); err != nil {
+			return "", err
+		}
+		return baseDomain, nil
+	}
+
+	return "", fmt.Errorf("failed to reserve a DNS prefix for %s after 5 attempts", cluster.Name)
+}
+
+func (r *ClusterReconciler) persistBaseDomain(ctx context.Context, cluster *hyperfleetv1alpha1.Cluster, baseDomain string) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var latest hyperfleetv1alpha1.Cluster
+		if err := r.Get(ctx, client.ObjectKeyFromObject(cluster), &latest); err != nil {
+			return err
+		}
+		latest.Status.BaseDomain = baseDomain
+		return r.Status().Update(ctx, &latest)
+	})
+}
+
+// tryReserveDNS attempts a two-phase creation: first an Index in the shard's
+// uniqueness namespace, then a DNSReservation in the account namespace.
+// Returns:
+//   - baseDomain: fully assembled domain (only meaningful when reserved=true)
+//   - reserved: true if newly created or already owned by this cluster
+//   - err: non-nil on API errors (collision returns reserved=false, nil)
+func (r *ClusterReconciler) tryReserveDNS(ctx context.Context, cluster *hyperfleetv1alpha1.Cluster, shard, prefix string) (string, bool, error) {
+	baseDomain := fmt.Sprintf("%s.%s.%s", prefix, shard, r.RegionalConfig.BaseDomainSuffix)
+	shardNS := dnsShardNamespace(shard)
+	accountNS := accountNamespace(cluster.Spec.AccountID)
+
+	// Phase 1: Create the Index (global uniqueness guard).
+	idx := &hyperfleetv1alpha1.Index{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      prefix,
+			Namespace: shardNS,
+			Labels: map[string]string{
+				accountIDLabel:        cluster.Spec.AccountID,
+				clusterNamespaceLabel: cluster.Namespace,
+			},
+		},
+		Spec: hyperfleetv1alpha1.IndexSpec{},
+	}
+
+	if err := r.Create(ctx, idx); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return "", false, fmt.Errorf("create index: %w", err)
+		}
+		var existingIdx hyperfleetv1alpha1.Index
+		if err := r.Get(ctx, client.ObjectKey{Namespace: shardNS, Name: prefix}, &existingIdx); err != nil {
+			return "", false, err
+		}
+		if existingIdx.Labels[clusterNamespaceLabel] != cluster.Namespace {
+			return "", false, nil // different cluster owns this prefix
+		}
+		// We own it (idempotent re-entry) — fall through to phase 2.
+	}
+
+	// Phase 2: Create the DNSReservation (account-scoped data).
+	res := &hyperfleetv1alpha1.DNSReservation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-%s", shard, prefix),
+			Namespace: accountNS,
+			Labels: map[string]string{
+				accountIDLabel:        cluster.Spec.AccountID,
+				clusterNamespaceLabel: cluster.Namespace,
+			},
+		},
+		Spec: hyperfleetv1alpha1.DNSReservationSpec{
+			IndexRef: hyperfleetv1alpha1.IndexRef{
+				Namespace: shardNS,
+				Name:      prefix,
+			},
+			BaseDomain: baseDomain,
+		},
+	}
+
+	if err := r.Create(ctx, res); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			// Clean up the orphaned Index.
+			_ = r.Delete(ctx, idx)
+			return "", false, fmt.Errorf("create dns reservation: %w", err)
+		}
+		var existingRes hyperfleetv1alpha1.DNSReservation
+		if err := r.Get(ctx, client.ObjectKeyFromObject(res), &existingRes); err != nil {
+			return "", false, err
+		}
+		if existingRes.Labels[clusterNamespaceLabel] == cluster.Namespace {
+			return existingRes.Spec.BaseDomain, true, nil
+		}
+		return "", false, nil
+	}
+
+	return baseDomain, true, nil
+}
+
+func randomHex4() (string, error) {
+	b := make([]byte, 2)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("crypto/rand: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
 
 func (r *ClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {

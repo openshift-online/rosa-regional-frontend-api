@@ -1,0 +1,71 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: indices.hyperfleet.io
+spec:
+  group: hyperfleet.io
+  names:
+    kind: Index
+    listKind: IndexList
+    plural: indices
+    shortNames:
+    - hfidx
+    singular: index
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: "Index reserves a unique name within a namespace that acts as
+          a uniqueness\ndomain. The database primary key (gvk, namespace, name) guarantees
+          that no\ntwo Index resources can share the same name inside the same namespace,\nproviding
+          an atomic global-uniqueness guard for higher-level resources.\nThe spec
+          is intentionally empty: the namespace (the uniqueness domain) and\nthe name
+          (the unique value) carry all the meaning.\n\nIndex is a generic primitive.
+          Each caller picks a namespace naming scheme\nfor its uniqueness domain and
+          attaches whatever labels it needs for\nownership and cleanup; none of that
+          is intrinsic to Index. For example:\n\n\tdns-shard-<id>-reservations   —
+          one domain per DNS shard, keyed by prefix\n\toidc-issuer-reservations      —
+          a single domain keyed by issuer URL\n\nA higher-level resource points at
+          its Index by (namespace, name) — e.g.\nDNSReservation records the pair in
+          spec.indexRef so it can find and delete\nthe backing Index without recomputing
+          it.\n\nCallers commonly label entries with hyperfleet.io/account-id (owning
+          AWS\naccount) for filtering and cleanup; other labels are caller-specific
+          (the\nDNS flow, for instance, also stamps hyperfleet.io/cluster-namespace
+          so a\ncluster's entries can be swept on deletion)."
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              IndexSpec is intentionally empty. All uniqueness semantics are encoded in
+              the resource's namespace (the uniqueness domain) and name (the unique value).
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources: {}

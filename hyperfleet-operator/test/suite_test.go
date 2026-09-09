@@ -177,8 +177,8 @@ var _ = BeforeSuite(func() {
 		Scheme: mgr.GetScheme(),
 		Dynamo: dynamoCli,
 		RegionalConfig: render.RegionalConfig{
-			BaseDomain: "e2e.example.com",
-			AWSRegion:  "us-east-1",
+			BaseDomainSuffix: "e2e.example.com",
+			AWSRegion:        "us-east-1",
 		},
 		StatusEvents: clusterStatusEvents,
 		EventRouter:  eventRouter,

@@ -33,6 +33,18 @@ var _ = BeforeEach(func() {
 })
 
 func purgeResources() {
+	clearFinalizersAndDelete()
+
+	// Poll until all resources are gone, re-clearing finalizers on each pass.
+	// The controller may re-add a finalizer between our Update and Delete, leaving
+	// the object stuck in terminating. Returning an error from Update lets
+	// Eventually retry with a fresh List that has the current ResourceVersion.
+	Eventually(waitForResourcesGone, 15*time.Second, 100*time.Millisecond).Should(Equal(0))
+}
+
+// clearFinalizersAndDelete issues best-effort delete requests for all test
+// resources with their finalizers cleared.
+func clearFinalizersAndDelete() {
 	c := mgr.GetClient()
 
 	// Issue the initial delete requests with finalizers cleared.
@@ -68,73 +80,86 @@ func purgeResources() {
 			_ = c.Delete(ctx, &oidcConfigs.Items[i])
 		}
 	}
-
-	// Poll until all resources are gone, re-clearing finalizers on each pass.
-	// The controller may re-add a finalizer between our Update and Delete, leaving
-	// the object stuck in terminating. Returning an error from Update lets
-	// Eventually retry with a fresh List that has the current ResourceVersion.
-	Eventually(func() (int, error) {
-		// Bind each retry attempt with a deadline to prevent indefinite blocking.
-		opCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-
-		total := 0
-		var cl hyperfleetv1alpha1.ClusterList
-		if err := c.List(opCtx, &cl); err != nil {
-			return 0, err
+	var dnsReservations hyperfleetv1alpha1.DNSReservationList
+	if err := c.List(ctx, &dnsReservations); err == nil {
+		for i := range dnsReservations.Items {
+			_ = c.Delete(ctx, &dnsReservations.Items[i])
 		}
-		for i := range cl.Items {
-			if len(cl.Items[i].Finalizers) > 0 {
-				cl.Items[i].SetFinalizers(nil)
-				if err := c.Update(opCtx, &cl.Items[i]); err != nil {
-					return 0, err
-				}
-			}
-			// Delete after clearing finalizers; treat NotFound as success (already deleted).
-			if err := c.Delete(opCtx, &cl.Items[i]); err != nil && !apierrors.IsNotFound(err) {
+	}
+	var indexes hyperfleetv1alpha1.IndexList
+	if err := c.List(ctx, &indexes); err == nil {
+		for i := range indexes.Items {
+			_ = c.Delete(ctx, &indexes.Items[i])
+		}
+	}
+}
+
+// waitForResourcesGone lists the finalizer-bearing test resources, re-clears any
+// finalizers a controller may have re-added, deletes leftovers, and reports how
+// many remain so an Eventually caller can retry until zero.
+func waitForResourcesGone() (int, error) {
+	c := mgr.GetClient()
+
+	// Bind each retry attempt with a deadline to prevent indefinite blocking.
+	opCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	total := 0
+	var cl hyperfleetv1alpha1.ClusterList
+	if err := c.List(opCtx, &cl); err != nil {
+		return 0, err
+	}
+	for i := range cl.Items {
+		if len(cl.Items[i].Finalizers) > 0 {
+			cl.Items[i].SetFinalizers(nil)
+			if err := c.Update(opCtx, &cl.Items[i]); err != nil {
 				return 0, err
 			}
 		}
-		total += len(cl.Items)
-
-		var nl hyperfleetv1alpha1.NodePoolList
-		if err := c.List(opCtx, &nl); err != nil {
+		// Delete after clearing finalizers; treat NotFound as success (already deleted).
+		if err := c.Delete(opCtx, &cl.Items[i]); err != nil && !apierrors.IsNotFound(err) {
 			return 0, err
 		}
-		for i := range nl.Items {
-			if len(nl.Items[i].Finalizers) > 0 {
-				nl.Items[i].SetFinalizers(nil)
-				if err := c.Update(opCtx, &nl.Items[i]); err != nil {
-					return 0, err
-				}
-			}
-			// Delete after clearing finalizers; treat NotFound as success (already deleted).
-			if err := c.Delete(opCtx, &nl.Items[i]); err != nil && !apierrors.IsNotFound(err) {
+	}
+	total += len(cl.Items)
+
+	var nl hyperfleetv1alpha1.NodePoolList
+	if err := c.List(opCtx, &nl); err != nil {
+		return 0, err
+	}
+	for i := range nl.Items {
+		if len(nl.Items[i].Finalizers) > 0 {
+			nl.Items[i].SetFinalizers(nil)
+			if err := c.Update(opCtx, &nl.Items[i]); err != nil {
 				return 0, err
 			}
 		}
-		total += len(nl.Items)
-
-		var ml hyperfleetv1alpha1.ManifestList
-		if err := c.List(opCtx, &ml); err != nil {
+		// Delete after clearing finalizers; treat NotFound as success (already deleted).
+		if err := c.Delete(opCtx, &nl.Items[i]); err != nil && !apierrors.IsNotFound(err) {
 			return 0, err
 		}
-		for i := range ml.Items {
-			if len(ml.Items[i].Finalizers) > 0 {
-				ml.Items[i].SetFinalizers(nil)
-				if err := c.Update(opCtx, &ml.Items[i]); err != nil {
-					return 0, err
-				}
-			}
-			// Delete after clearing finalizers; treat NotFound as success (already deleted).
-			if err := c.Delete(opCtx, &ml.Items[i]); err != nil && !apierrors.IsNotFound(err) {
+	}
+	total += len(nl.Items)
+
+	var ml hyperfleetv1alpha1.ManifestList
+	if err := c.List(opCtx, &ml); err != nil {
+		return 0, err
+	}
+	for i := range ml.Items {
+		if len(ml.Items[i].Finalizers) > 0 {
+			ml.Items[i].SetFinalizers(nil)
+			if err := c.Update(opCtx, &ml.Items[i]); err != nil {
 				return 0, err
 			}
 		}
-		total += len(ml.Items)
+		// Delete after clearing finalizers; treat NotFound as success (already deleted).
+		if err := c.Delete(opCtx, &ml.Items[i]); err != nil && !apierrors.IsNotFound(err) {
+			return 0, err
+		}
+	}
+	total += len(ml.Items)
 
-		return total, nil
-	}, 15*time.Second, 100*time.Millisecond).Should(Equal(0))
+	return total, nil
 }
 
 func scanTable(tableName string) []map[string]dynamodbtypes.AttributeValue {
@@ -200,6 +225,7 @@ func newTestCluster(name string) *hyperfleetv1alpha1.Cluster {
 	return &hyperfleetv1alpha1.Cluster{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "cluster-e2e-cluster-id"},
 		Spec: hyperfleetv1alpha1.ClusterSpec{
+			AccountID:  "111222333444",
 			CreatorARN: "arn:aws:iam::111222333444:user/e2etester",
 			HostedCluster: hyperfleetv1alpha1.HostedClusterSpecPassthrough{
 				Release:    hypershiftv1beta1.Release{Image: "quay.io/ocp:4.17"},
